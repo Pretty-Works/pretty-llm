@@ -38,4 +38,8 @@ dependencies = [
     "langchain-experimental>=0.4.1",
     "openevals>=0.2.0",
     "agentevals>=0.0.9",
+    # ── AI 서버(FastAPI) ──
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic-settings>=2.5.0",
 ]
