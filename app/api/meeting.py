@@ -12,10 +12,11 @@ from app.schemas.response import (
     MeetingFollowupResult,
     MeetingSummarizeResponse,
     MeetingSummaryResult,
+    ApiResponse,
 )
 
 router = APIRouter()
-llm = AsyncOpenAI(api_key=settings.openai_api_key)
+llm = AsyncOpenAI(api_key=settings.llm_api_key)
 
 
 async def _fetch_meeting(meeting_id: int, http: httpx.AsyncClient) -> dict:

@@ -19,7 +19,7 @@ from app.config import settings
 from app.prompts.meeting_schedule import SCHEDULE_AGENT_SYSTEM, SCHEDULE_AGENT_USER
 from app.schemas.state import AgentOutput, ScheduleAgentInput, ScheduleAgentResult, MeetingSlot
 
-llm = ChatOpenAI(model=settings.openai_model, api_key=settings.openai_api_key)
+llm = ChatOpenAI(model=settings.llm_model, api_key=settings.llm_api_key)
 
 
 # ── Tools ─────────────────────────────────────────────────────

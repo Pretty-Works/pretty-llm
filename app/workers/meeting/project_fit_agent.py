@@ -16,7 +16,7 @@ from app.config import settings
 from app.prompts.meeting_project_fit import PROJECT_FIT_AGENT_SYSTEM, PROJECT_FIT_AGENT_USER
 from app.schemas.state import AgentOutput, MeetingSlot
 
-llm = ChatOpenAI(model=settings.openai_model, api_key=settings.openai_api_key)
+llm = ChatOpenAI(model=settings.llm_model, api_key=settings.llm_api_key)
 
 
 # ── Tool ──────────────────────────────────────────────────────

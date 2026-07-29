@@ -1,3 +1,14 @@
+"""
+서버 시작 스위치
+
+FastAPI 앱을 만들고, api/ 라우터를 연결하고, 공통 규칙(예외 핸들러 등)을 등록한다.
+실행:  uvicorn app.main:app --reload
+
+담당자 1.
+"""
+
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -10,15 +21,13 @@ from app.config import settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 시작 시 초기화
-    print(f"[startup] env={settings.app_env}")
+    print(f"[startup] app={settings.app_name} debug={settings.debug}")
     yield
-    # 종료 시 정리
     print("[shutdown] cleanup done")
 
 
 app = FastAPI(
-    title="Pretty Works LLM API",
+    title=settings.app_name,
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -50,5 +59,6 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 @app.get("/health")
-async def health_check():
-    return {"status": "ok"}
+def health() -> dict:
+    """서버 생존 확인용. 배포/모니터링에서 이걸 찌른다."""
+    return {"status": "ok", "app": settings.app_name}

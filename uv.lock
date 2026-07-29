@@ -669,6 +669,22 @@ wheels = [
 ]
 
 [[package]]
+name = "fastapi"
+version = "0.140.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0d/fb/fd7671137d9fa3df1d93a2f5111eb982709201724b29f211e4beb2d58688/fastapi-0.140.0.tar.gz", hash = "sha256:f338951b82fd74ca8f843163aec43ea1a1ce84d515415a50fa98fa25572a5544", size = 420968, upload-time = "2026-07-24T21:16:41.187Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/76/6d9e25ad88da9d3ff744bcdbec4736e38c2288611d43f673a5d9bfa27c07/fastapi-0.140.0-py3-none-any.whl", hash = "sha256:e951c0a0d9540bf5d9a2a9e078fd415da2ab7e312d435139e7d9e2e7fe9f0b23", size = 130863, upload-time = "2026-07-24T21:16:42.89Z" },
+]
+
+[[package]]
 name = "filelock"
 version = "3.32.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2298,6 +2314,7 @@ dependencies = [
     { name = "beautifulsoup4" },
     { name = "deepagents" },
     { name = "faiss-cpu" },
+    { name = "fastapi" },
     { name = "google-search-results" },
     { name = "ipykernel" },
     { name = "langchain" },
@@ -2320,12 +2337,14 @@ dependencies = [
     { name = "pandas" },
     { name = "pdfplumber" },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "pymupdf" },
     { name = "pypdf" },
     { name = "python-dotenv" },
     { name = "pytz" },
     { name = "requests" },
     { name = "streamlit" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
@@ -2335,6 +2354,7 @@ requires-dist = [
     { name = "beautifulsoup4" },
     { name = "deepagents", specifier = ">=0.5.3" },
     { name = "faiss-cpu", specifier = ">=1.14.2" },
+    { name = "fastapi", specifier = ">=0.115.0" },
     { name = "google-search-results", specifier = ">=2.4.2" },
     { name = "ipykernel", specifier = ">=7.2.0" },
     { name = "langchain", specifier = ">=1.2.18" },
@@ -2357,12 +2377,14 @@ requires-dist = [
     { name = "pandas" },
     { name = "pdfplumber", specifier = ">=0.11.9" },
     { name = "pydantic" },
+    { name = "pydantic-settings", specifier = ">=2.5.0" },
     { name = "pymupdf", specifier = ">=1.27.2.2" },
     { name = "pypdf", specifier = ">=6.13.1" },
     { name = "python-dotenv" },
     { name = "pytz", specifier = ">=2026.1.post1" },
     { name = "requests" },
     { name = "streamlit" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
 ]
 
 [[package]]

@@ -24,7 +24,7 @@ from app.schemas.state import (
     ScenarioResult,
 )
 
-llm = ChatOpenAI(model=settings.openai_model, api_key=settings.openai_api_key)
+llm = ChatOpenAI(model=settings.llm_model, api_key=settings.llm_api_key)
 
 # ── 시나리오 타입 ──────────────────────────────────────────────
 SCENARIO_EXTEND = "일정연장"
