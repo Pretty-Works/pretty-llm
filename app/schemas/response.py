@@ -68,6 +68,26 @@ class DecisionResult(BaseModel):
     auditLogId: Optional[str] = None
 
 
+# ─── 회의록 (담당자3) ────────────────────────────────────────
+class MeetingSummaryResult(BaseModel):
+    meeting_id: int
+    summary: str
+
+
+class FollowupItem(BaseModel):
+    action: str
+    assignee: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+class MeetingFollowupResult(BaseModel):
+    meeting_id: int
+    follow_ups: list[FollowupItem]
+
+
+MeetingSummarizeResponse = ApiResponse[MeetingSummaryResult]
+MeetingExtractFollowupResponse = ApiResponse[MeetingFollowupResult]
+
 # TODO (각 도메인 담당자):
 #   - 프로젝트/마일스톤/Task/지출/게시글/회의록 조회·생성 응답 result 모델
 #   - 대부분 ApiResponse[구체타입] 형태로 감싸 반환

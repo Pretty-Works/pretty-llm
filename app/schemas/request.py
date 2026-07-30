@@ -20,16 +20,16 @@ from app.schemas.state import Domain, Mode
 # ─── 진입: 에이전트에게 보내는 자연어 요청 ─────────────────
 class AgentRequest(BaseModel):
     """Orchestrator 진입점. 대부분의 AI 기능이 여기로 들어온다."""
-    message: str                              # 사용자 자연어
-    domain_hint: Optional[Domain] = None      # 화면에서 이미 아는 경우 힌트
-    context: dict[str, Any] = Field(default_factory=dict)  # 현재 화면 맥락(폼 draft 등)
+    message: str
+    domain_hint: Optional[Domain] = None
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 # ─── AI 생성형: 인력 배정 추천 ─────────────────────────────
 class StaffingRecommendationRequest(BaseModel):
-    project_id: Optional[int] = None          # 있으면 기존 프로젝트 인원 추가 모드
+    project_id: Optional[int] = None
     project_name: str
-    description: Optional[str] = None          # 미입력 시 에이전트가 필요 역량 추론
+    description: Optional[str] = None
     start_date: str
     target_date: str
     required_skills: list[str] = Field(default_factory=list)
@@ -40,19 +40,16 @@ class StaffingRecommendationRequest(BaseModel):
 class ReplanRequest(BaseModel):
     trigger: Optional[
         Literal["deadline_slip", "member_left", "budget_overrun", "scope_change"]
-    ] = None                                   # None이면 서버가 자체 진단
-    context: Optional[str] = None              # 사용자 보충 설명
+    ] = None
+    context: Optional[str] = None
     scenario_count: int = 3
 
 
-# ─── HITL 확정: 모든 생성형 기능의 승인/거절 (담당자 1) ────
-#     approve/reject/replan 공통. selection 키는 기능마다 다름.
+# ─── HITL 확정: 모든 생성형 기능의 승인/거절 (담당자1) ─────
 class DecisionRequest(BaseModel):
     action: Literal["approve", "reject", "replan"]
     selection: dict[str, Any] = Field(default_factory=dict)
-    # 예) 인력배정 → {"selectedUserIds": [5, 9]}
-    #     재계획   → {"selectedScenarioId": "sc_2", "appliedScopes": ["milestones","budget"]}
-    rejection_reason: Optional[str] = None     # action="replan"일 때 필수
+    rejection_reason: Optional[str] = None
 
 
 # TODO (각 도메인 담당자):
