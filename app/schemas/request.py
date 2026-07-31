@@ -17,12 +17,26 @@ from pydantic import BaseModel, Field
 from app.schemas.state import Domain, Mode
 
 
-# ─── 진입: 에이전트에게 보내는 자연어 요청 ─────────────────
+# ─── Spring → FastAPI 공통 요청 (연동 규격 §3) ─────────────
+class MessageItem(BaseModel):
+    role: Literal["USER", "AGENT"]
+    content: str
+
+
+class ScreenContext(BaseModel):
+    screen: str                                    # 화면 식별자 (예: PROJECT_CREATE)
+    formState: dict[str, Any] = Field(default_factory=dict)  # 화면 폼 현재 입력값
+
+
 class AgentRequest(BaseModel):
-    """Orchestrator 진입점. 대부분의 AI 기능이 여기로 들어온다."""
-    message: str
-    domain_hint: Optional[Domain] = None
-    context: dict[str, Any] = Field(default_factory=dict)
+    """Spring이 채워서 보내는 공통 요청. FE가 직접 보내지 않는다."""
+    userId: int                                    # Spring이 JWT에서 꺼내 넣음
+    conversationId: int
+    goal: str                                      # 사용자 입력 원문
+    messages: list[MessageItem] = Field(default_factory=list)  # 최근 10건
+    screenContext: ScreenContext
+    requestSource: str = "WEB"
+    locale: str = "ko-KR"
 
 
 # ─── AI 생성형: 인력 배정 추천 ─────────────────────────────
