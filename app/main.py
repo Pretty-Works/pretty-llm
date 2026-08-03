@@ -9,22 +9,56 @@ FastAPI 앱을 만들고, api/ 라우터를 연결하고, 공통 규칙(예외 �
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
 
-from app.api import routes
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from app.api.routes import router
 from app.config import settings
 
-app = FastAPI(title=settings.app_name)
 
-app.include_router(routes.router)   # api/ 의 엔드포인트 연결
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print(f"[startup] app={settings.app_name} debug={settings.debug}")
+    yield
+    print("[shutdown] cleanup done")
+
+
+app = FastAPI(
+    title=settings.app_name,
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 프로덕션에서는 프론트 도메인으로 교체
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 라우터 등록
+app.include_router(router, prefix="/api/v1")
+
+
+# 글로벌 예외 핸들러
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={
+            "errorCode": "INTERNAL_ERROR",
+            "message": str(exc),
+            "result": None,
+        },
+    )
 
 
 @app.get("/health")
 def health() -> dict:
     """서버 생존 확인용. 배포/모니터링에서 이걸 찌른다."""
     return {"status": "ok", "app": settings.app_name}
-
-
-# TODO (4단계)
-#   from app.common.exceptions import register_exception_handlers
-#   register_exception_handlers(app)               # 503·422·429 등 공통 에러 응답

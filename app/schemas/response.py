@@ -19,7 +19,8 @@ from app.schemas.state import Domain
 T = TypeVar("T")
 
 
-# ─── 공통 래퍼 (모든 응답이 이 형태) ───────────────────────
+# ─── 공통 래퍼 (모든 응답이 이 형태)  ───────────────────────
+# FastAPI가 Spring 내부 API로 데이터 조회할 때 Spring이 돌려주는 것
 class ApiResponse(BaseModel, Generic[T]):
     errorCode: Optional[str] = None      # 성공 시 None, 실패 시 "PROJECT_001" 등(가안)
     message: str = "SUCCESS"
@@ -67,6 +68,43 @@ class DecisionResult(BaseModel):
     attempt: Optional[int] = None        # replan 재시도 횟수
     auditLogId: Optional[str] = None
 
+
+# ─── FastAPI → Spring 공통 응답 (연동 규격 §4) ──────────────
+class ActionPayload(BaseModel):
+    type: str                                      # FILL_FORM | NAVIGATE 등
+    requiresApproval: bool                         # Spring이 해석하는 유일한 필드
+    summary: Optional[str] = None                 # 승인 카드 표시 문구
+    targetScreen: Optional[str] = None            # 이동할 화면 식별자
+    params: dict[str, Any] = Field(default_factory=dict)
+    formData: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentResponse(BaseModel):
+    answer: str                                    # 말풍선 텍스트
+    success: bool                                  # LLM팀이 직접 판정
+    action: Optional[ActionPayload] = None         # 없으면 null
+    raw: Optional[dict[str, Any]] = None           # 디버깅용 원본
+
+
+# ─── 회의록 (담당자3) ────────────────────────────────────────
+class MeetingSummaryResult(BaseModel):
+    meeting_id: int
+    summary: str
+
+
+class FollowupItem(BaseModel):
+    action: str
+    assignee: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+class MeetingFollowupResult(BaseModel):
+    meeting_id: int
+    follow_ups: list[FollowupItem]
+
+
+MeetingSummarizeResponse = ApiResponse[MeetingSummaryResult]
+MeetingExtractFollowupResponse = ApiResponse[MeetingFollowupResult]
 
 # TODO (각 도메인 담당자):
 #   - 프로젝트/마일스톤/Task/지출/게시글/회의록 조회·생성 응답 result 모델

@@ -33,11 +33,18 @@ class Settings(BaseSettings):
     #   API 키는 .env 의 OPENAI_API_KEY 로 두면 langchain 이 자동 사용.
     llm_provider: str = "openai"              # openai | anthropic | google
     llm_model: str = "gpt-4o-mini"            # 실제 모델명은 팀 합의 후 확정
+    llm_api_key: str | None = None            # 엔진 B 쪽이 명시 참조. None 이면 환경변수 폴백
     llm_timeout_s: float = 30.0
     llm_max_retries: int = 2
 
-    # ── 백엔드 연동 (AI가 데이터 되물을 때 = /api/internal/v1/...) ──
-    backend_base_url: str = "http://localhost:8080"
+    # ── 백엔드 연동 (내부 도구 API = /api/internal/agent/**) ──
+    #   규격: ⭐ 내부 도구 API 공동 규격 (FastAPI → Spring)
+    backend_base_url: str = "http://localhost:3001"   # Spring BE
+    internal_api_key: str = ""                        # X-Internal-Api-Key. 아직 미수령
+    mock_backend: bool = True                         # true면 HTTP 없이 고정값 반환
+    backend_connect_timeout_s: float = 3.0
+    backend_read_timeout_s: float = 20.0
+    tool_call_limit: int = 20                         # 실행당 도구 호출 상한 (규격 §6)
 
     # ── HITL checkpointer (승인 대기 상태 보관) ──
     #   InMemorySaver 를 쓰면 서버 재시작 시 승인 대기 건이 사라져
