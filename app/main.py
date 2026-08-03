@@ -11,9 +11,12 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from app.api import routes
 from app.config import settings
 
 app = FastAPI(title=settings.app_name)
+
+app.include_router(routes.router)   # api/ 의 엔드포인트 연결
 
 
 @app.get("/health")
@@ -22,9 +25,6 @@ def health() -> dict:
     return {"status": "ok", "app": settings.app_name}
 
 
-# TODO (다음 단계)
-#   from app.api import routes
-#   app.include_router(routes.router)              # api/ 의 엔드포인트 연결
-#
+# TODO (4단계)
 #   from app.common.exceptions import register_exception_handlers
 #   register_exception_handlers(app)               # 503·422·429 등 공통 에러 응답

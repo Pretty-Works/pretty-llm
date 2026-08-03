@@ -21,6 +21,7 @@ from app.schemas.state import Domain, Mode
 class AgentRequest(BaseModel):
     """Orchestrator 진입점. 대부분의 AI 기능이 여기로 들어온다."""
     message: str                              # 사용자 자연어
+    user_id: int                              # 백엔드가 인증 후 넘겨줌 (실제 명세서 기준)
     domain_hint: Optional[Domain] = None      # 화면에서 이미 아는 경우 힌트
     context: dict[str, Any] = Field(default_factory=dict)  # 현재 화면 맥락(폼 draft 등)
 

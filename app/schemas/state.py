@@ -75,6 +75,19 @@ class Violation(BaseModel):
     ref: Optional[str] = None    # 위반 대상 (milestoneId, userId 등)
 
 
+# ─── HITL 제안 봉투 (내부 보관용, 담당자 1) ────────────────
+#     프론트로 나가는 response.SuggestionResponse 와는 별개.
+#     hitl이 이 형태로 제안을 저장해두고, 승인 시 다시 꺼내 반영한다.
+class Suggestion(BaseModel):
+    suggestion_id: str
+    domain: Domain
+    kind: str                    # "vacation_approve" | "replan" | "staffing" ...
+    payload: dict[str, Any]      # 제안 본문
+    reasoning: list[str]         # 판단 근거 (감사로그)
+    requester_id: int
+    attempt: int = 1             # replan 재시도 횟수
+
+
 # ─── Engine B 그래프 상태 (LangGraph State) ────────────────
 #     각 노드가 자기 필드만 채우고 다음 노드로 넘긴다 (단일책임).
 class EngineBState(BaseModel):

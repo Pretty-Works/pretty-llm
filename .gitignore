@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 .env
 *.log
+
+# HITL checkpointer (승인 대기 상태 — 로컬 실행 데이터)
+data/
