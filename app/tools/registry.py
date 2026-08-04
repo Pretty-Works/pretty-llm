@@ -30,6 +30,11 @@ class RunContext:
     approval_token: str | None = None       # WRITE 승인 시 BE 가 발급. resume 바디로 옴
     params_canonical: bytes | None = None   # BE 가 해시한 바이트 원본 (있으면 그대로 전송)
 
+    # done.action 의 출처 — 도구가 실행 결과를 여기 기록하면 SSE 층이 done 에 싣는다.
+    #   meeting_create → NAVIGATE(회의록 화면) / navigate → 삭제·수정 안내 /
+    #   fill_form → FILL_FORM(폼 채우기). LLM 은 이 필드를 못 본다 (도구만 쓴다).
+    action: dict | None = None
+
 
 # ─────────────────────────────────────────────────────────────
 # ② 승인 등급 — auto 모드 정책
@@ -75,7 +80,13 @@ WRITE_TOOLS: dict[str, dict] = {
         "path": "/projects/{projectId}/meetings",
         "path_params": ("projectId",),
     },
-    # 추가 예정: task_create · leave_create · schedule_create · expense_create ...
+    "leave_create": {
+        "catalog": "leave.create",          # AUTO_FORBIDDEN — auto 모드에도 항상 사람 승인
+        "method": "POST",
+        "path": "/leaves",
+        "path_params": (),
+    },
+    # 추가 예정: task_create · schedule_create · expense_create ... (수요일 D)
 }
 
 
