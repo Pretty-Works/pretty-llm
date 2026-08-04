@@ -68,7 +68,7 @@ async def _start_until_approval(client, body, max_hops: int = 3):
     while events[-1][0] == "question" and hops < max_hops:
         events = await _collect_sse(client, "POST",
                                     f"/api/agent/runs/{body['runId']}/resume",
-                                    {"answer": FULL_INFO})
+                                    {"questionId": 1, "selectedIds": [], "text": FULL_INFO})
         hops += 1
     return first_names, events
 
@@ -137,7 +137,7 @@ async def _scenarios() -> None:
         res = await client.post("/api/agent/runs/run_ghost/resume",
                                 json={"toolCallId": "tc_x", "decision": "APPROVED"})
         assert res.status_code == 404, res.status_code
-        assert res.json()["detail"]["errorCode"] == "AGENT_016"
+        assert res.json()["detail"] == "run not found"   # BE 가 AGENT_016 으로 번역
         print("✅ ④ 체크포인트 없음 → 404 AGENT_016", flush=True)
 
         # ── ⑤ toolCallId 불일치 → 400 ────────────────────────

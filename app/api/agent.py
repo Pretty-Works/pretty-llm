@@ -53,24 +53,30 @@ class RunRequest(BaseModel):
     screenContext: ScreenContext = Field(default_factory=ScreenContext)
     requestSource: str = "WEB"
     locale: str = "ko-KR"
+    # 정보용 — 동작 분기 금지 (규격 §5-1). true 여도 approval_request 를 그대로
+    # 방출한다. 쓸 수 있는 곳: step 문구 조정, alternatives 생성 생략.
+    autoApprove: bool = False
 
 
 class ResumeRequest(BaseModel):
-    """승인 재개와 질문 답변 재개를 한 몸으로 받는다.
+    """승인 재개와 질문 답변 재개를 한 몸으로 받는다 (규격 v2 §5 그대로).
 
-    대기 중인 게 approval 이면 toolCallId·decision 이 필수,
-    question 이면 answer 가 필수 — 검증은 대기 상태를 보고 한다.
-    (질문 답변의 정확한 필드명은 노션 재확인 때 최종 대조 — C 단계)
+    approval 대기: toolCallId·decision(APPROVED|REJECTED|ALTERNATIVE) 필수
+    question 대기: questionId·selectedIds·text — 검증은 대기 상태를 보고 한다.
     """
     # 승인 재개용
     toolCallId: str | None = None
-    decision: str | None = None          # APPROVED | REJECTED
+    decision: str | None = None          # APPROVED | REJECTED | ALTERNATIVE
     approvalToken: str | None = None     # WRITE 승인일 때만. X-Approval-Token 으로 전달됨
-    reason: str | None = None            # 거절 사유 (200자 이하)
-    paramsCanonical: str | None = None   # BE 가 해시한 바이트 원본 (요청해둔 확장)
+    paramsCanonical: str | None = None   # BE 가 해시한 그 문자열 — 바이트 그대로 전송
+    reason: str | None = None            # 거절 사유. 선택, 200자 이하
+    alternativeId: str | None = None     # decision=ALTERNATIVE 일 때만
     # 질문 답변용
-    questionId: int | None = None
-    answer: str | None = None            # 선택지 id 또는 자유 입력 텍스트
+    questionId: int | None = None        # BE 가 부여한 질문 ID
+    selectedIds: list[str] = Field(default_factory=list)   # 고른 options[].id
+    text: str | None = None              # 자유 입력값 (500자 이하)
+    # 공통 — 정보용, 동작 분기 금지. 매 resume 마다 현재값이 온다
+    autoApprove: bool = False
 
 
 # ── 엔드포인트 ─────────────────────────────────────────────
@@ -141,10 +147,8 @@ async def resume_run(run_id: str, req: ResumeRequest) -> StreamingResponse:
     saver = await get_checkpointer()
     tup = await saver.aget_tuple({"configurable": {"thread_id": run_id}})
     if tup is None:
-        raise HTTPException(404, detail={
-            "errorCode": "AGENT_016",
-            "message": f"run {run_id} 의 체크포인트가 없습니다. 새 Run 으로 다시 시작하세요.",
-        })
+        # 규격 예시 그대로 {"detail": "run not found"} — BE 가 AGENT_016 으로 번역한다
+        raise HTTPException(404, detail="run not found")
     meta = tup.metadata or {}
     route = meta.get("route", "engine_a")
     domain = meta.get("domain", "meeting")
@@ -163,31 +167,28 @@ def _validated_command(req: ResumeRequest, snapshot, run_id: str):
     """대기 상태(approval/question)와 재개 요청이 맞는지 검증하고 Command 를 만든다."""
     kind = _pending_kind(snapshot)
     if kind is None:
-        raise HTTPException(400, detail={
-            "errorCode": None,
-            "message": f"run {run_id} 은 대기 중인 중단점이 없습니다 (이미 종료됨).",
-        })
+        raise HTTPException(400, detail="no pending interrupt (run already finished)")
 
     if kind == "question":
-        if req.answer is None:
-            raise HTTPException(400, detail={
-                "errorCode": None,
-                "message": "question 대기 중입니다 — answer 필드가 필요합니다.",
-            })
-        return hitl.build_resume_command("question", answer=req.answer)
+        # 규격: selectedIds 와 text 둘 다 비면 차단 (BE 도 REQUEST_001 로 막지만 이중 방어)
+        if not req.selectedIds and not req.text:
+            raise HTTPException(400, detail="selectedIds and text both empty")
+        # 선택지가 우선, text 는 보조 설명 (규격). 에이전트가 읽을 문장으로 조립
+        parts = []
+        if req.selectedIds:
+            parts.append(f"선택한 항목 id: {', '.join(req.selectedIds)}")
+        if req.text:
+            parts.append(f"입력: {req.text}")
+        return hitl.build_resume_command("question", answer=" / ".join(parts))
 
-    if req.decision not in ("APPROVED", "REJECTED"):
-        raise HTTPException(400, detail={
-            "errorCode": None,
-            "message": "approval 대기 중입니다 — decision(APPROVED|REJECTED)이 필요합니다.",
-        })
+    if req.decision not in ("APPROVED", "REJECTED", "ALTERNATIVE"):
+        raise HTTPException(400, detail="decision must be APPROVED|REJECTED|ALTERNATIVE")
     pending = _pending_tool_call_ids(snapshot)
     if req.toolCallId not in pending:
-        raise HTTPException(400, detail={
-            "errorCode": None,
-            "message": f"toolCallId 불일치: {req.toolCallId} (대기 중: {sorted(pending)})",
-        })
-    return hitl.build_resume_command("approval", decision=req.decision, reason=req.reason)
+        raise HTTPException(400, detail="toolCallId mismatch")     # 규격 예시 문자열
+    return hitl.build_resume_command("approval", decision=req.decision,
+                                     reason=req.reason,
+                                     alternative_id=req.alternativeId)
 
 
 async def _engine_b_stub(req: RunRequest):

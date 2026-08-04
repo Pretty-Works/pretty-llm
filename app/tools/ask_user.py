@@ -16,16 +16,12 @@ interrupt 없이 거절 문구를 반환해 LLM 이 아는 정보로 마무리�
 
 from __future__ import annotations
 
-import itertools
-
 from langchain.tools import ToolRuntime, tool
 from langgraph.types import interrupt
 
 from app.tools.registry import RunContext
 
-QUESTION_LIMIT = 5          # 규격: Run 당 5회 초과 시 AGENT_022
-
-_question_seq = itertools.count(1)
+QUESTION_LIMIT = 5          # 규격: Run 당 5회 초과 시 AGENT_022 (BE 도 자체 차단)
 
 
 @tool
@@ -37,10 +33,11 @@ def ask_user(label: str, text: str, options: list[str] | None = None,
     지어내서 진행하지 말고 이 도구로 물어라. 단, 이미 대화에 있는 정보를
     다시 묻지 마라. 한 번에 하나만 묻는다.
 
-    label:    질문의 짧은 제목 (예: "프로젝트 선택")
+    label:    질문의 짧은 제목, 명사형 (예: "프로젝트 선택", "회의 장소 입력")
     text:     사용자에게 보여줄 질문 문장
-    options:  보기 목록. 자유 입력만 받을 거면 생략
-    multiple: 보기를 여러 개 고를 수 있는가
+    options:  보기 목록 — 사용자가 읽을 이름표를 넣는다 (예: "그룹웨어 AI 고도화").
+              id 숫자를 넣지 마라. 자유 입력만 받을 거면 생략
+    multiple: 보기를 여러 개 고를 수 있는가 (참석자 고르기 등)
     """
     # 5회 제한 — 지금까지 이 도구가 답한 횟수를 대화 기록에서 센다.
     #   (interrupt 전에 세야 한다. BE 도 자체 카운트로 AGENT_022 를 낸다)
@@ -51,11 +48,11 @@ def ask_user(label: str, text: str, options: list[str] | None = None,
         return (f"질문 한도({QUESTION_LIMIT}회)를 넘어 더 물을 수 없습니다. "
                 "지금까지 아는 정보로 진행하거나, 부족하면 작업을 정리하고 종료하세요.")
 
+    # questionId 는 넣지 않는다 — BE 가 주입한다 (규격 명시)
     answer = interrupt({
         "kind": "question",              # hitl._drive 가 approval 과 구분하는 표식
-        "questionId": next(_question_seq),
-        "label": label,
-        "text": text,
+        "label": label[:30],
+        "text": text[:200],
         "options": [{"id": str(i + 1), "label": o, "description": None}
                     for i, o in enumerate(options or [])],
         "multiple": multiple,

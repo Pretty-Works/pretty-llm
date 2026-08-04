@@ -35,7 +35,9 @@ def step(text: str) -> str:
     return sse_event("step", {"text": text})
 
 
-def error(message: str) -> str:
-    """실패 알림. 스트림이 done 없이 끊기면 BE 가 AGENT_017 로 처리하므로,
-    예외가 나면 반드시 이걸 마지막으로 내보내야 한다."""
-    return sse_event("error", {"message": message})
+def error(message: str, code: str = "AGENT_007") -> str:
+    """실패 알림 — 규격 필드는 {code, message}.
+
+    스트림이 done 없이 끊기면 BE 가 AGENT_017 로 처리하므로, 예외가 나면
+    반드시 이걸 마지막으로 내보내야 한다. code 기본값 AGENT_007(처리 실패)."""
+    return sse_event("error", {"code": code, "message": message})
