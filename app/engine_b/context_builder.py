@@ -23,7 +23,7 @@ from app.schemas.state import (
     ScenarioSpec,
     TodoSnapshot,
 )
-from app.tools import budget_tool, hr_tool, project_tool
+from app.tools import budget_tool, hr_tool, project_query
 from app.utils.logger import get_logger
 from app.utils.parser import parse_date
 
@@ -88,7 +88,7 @@ def _resolve_project_ids(plan: AnalysisPlan, request: AnalysisRequest) -> list[s
     ids: list[str] = list(plan.entities.project_ids)
 
     for name in plan.entities.project_names:
-        project = project_tool.fetch_project(None, project_name=name)
+        project = project_query.fetch_project(None, project_name=name)
         if project and project["id"] not in ids:
             ids.append(project["id"])
 
@@ -100,7 +100,7 @@ def _resolve_project_ids(plan: AnalysisPlan, request: AnalysisRequest) -> list[s
         import json
 
         try:
-            payload = json.loads(project_tool.find_projects.invoke({"user_id": request.user_id}))
+            payload = json.loads(project_query.find_projects.invoke({"user_id": request.user_id}))
             ids = [
                 p["id"]
                 for p in payload.get("projects", [])
@@ -129,7 +129,7 @@ def _resolve_window(
 # ─── 적재 ─────────────────────────────────────────────────────────
 
 def _load_project(project_id: int) -> ProjectSnapshot | None:
-    raw = project_tool.fetch_project(project_id)
+    raw = project_query.fetch_project(project_id)
     if not raw:
         return None
 
@@ -143,7 +143,7 @@ def _load_project(project_id: int) -> ProjectSnapshot | None:
             hire_date=parse_date(m.get("hire_date")),
             status=m.get("status"),
         )
-        for m in project_tool._members(project_id)
+        for m in project_query._members(project_id)
     ]
 
     todos = [
@@ -156,7 +156,7 @@ def _load_project(project_id: int) -> ProjectSnapshot | None:
             assignee_id=t.get("assignee_id"),
             assignee_name=t.get("assignee_name"),
         )
-        for t in project_tool._todos(project_id)
+        for t in project_query._todos(project_id)
     ]
 
     return ProjectSnapshot(

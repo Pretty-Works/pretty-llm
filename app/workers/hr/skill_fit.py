@@ -16,7 +16,7 @@ from app.tools.hr_tool import (
     list_department_members,
     list_user_tasks,
 )
-from app.tools.project_tool import list_project_members, list_project_tasks
+from app.tools.project_query import list_project_members, list_project_tasks
 from app.workers.base import WorkerSpec
 
 

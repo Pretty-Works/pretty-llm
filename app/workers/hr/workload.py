@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from app.prompts import workload as prompt
 from app.tools.hr_tool import find_user, get_user_workload, list_user_leaves
-from app.tools.project_tool import list_project_tasks
+from app.tools.project_query import list_project_tasks
 from app.workers.base import WorkerSpec
 
 LoadStatus = Literal["OVERLOADED", "TIGHT", "BALANCED", "AVAILABLE"]

@@ -44,6 +44,11 @@ app.add_middleware(
 # 라우터 등록
 app.include_router(router, prefix="/api/v1")
 
+# 에이전트 전용 API (규격 v2, SSE) — /api/v1 과 별개 계약이라 prefix 없이 등록
+from app.api import agent as agent_api  # noqa: E402
+
+app.include_router(agent_api.router)
+
 
 # 글로벌 예외 핸들러
 @app.exception_handler(Exception)

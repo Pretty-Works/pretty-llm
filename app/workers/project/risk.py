@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from app.prompts import risk as prompt
 from app.tools.budget_tool import get_project_budget
 from app.tools.hr_tool import list_user_leaves
-from app.tools.project_tool import PROJECT_TOOLS
+from app.tools.project_query import PROJECT_TOOLS
 from app.workers.base import WorkerSpec
 
 RiskCategory = Literal["schedule", "resource", "scope", "quality", "cost", "external"]
