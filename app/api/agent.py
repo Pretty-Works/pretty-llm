@@ -51,11 +51,21 @@ class RunRequest(BaseModel):
 
 
 class ResumeRequest(BaseModel):
-    toolCallId: str
-    decision: str                        # APPROVED | REJECTED
+    """승인 재개와 질문 답변 재개를 한 몸으로 받는다.
+
+    대기 중인 게 approval 이면 toolCallId·decision 이 필수,
+    question 이면 answer 가 필수 — 검증은 엔드포인트에서 상태를 보고 한다.
+    (질문 답변의 정확한 필드명은 노션 재확인 때 최종 대조 — C 단계)
+    """
+    # 승인 재개용
+    toolCallId: str | None = None
+    decision: str | None = None          # APPROVED | REJECTED
     approvalToken: str | None = None     # WRITE 승인일 때만. X-Approval-Token 으로 전달됨
     reason: str | None = None            # 거절 사유 (200자 이하)
     paramsCanonical: str | None = None   # BE 가 해시한 바이트 원본 (요청해둔 확장)
+    # 질문 답변용
+    questionId: int | None = None
+    answer: str | None = None            # 선택지 id 또는 자유 입력 텍스트
 
 
 # ── 엔드포인트 ─────────────────────────────────────────────
@@ -82,12 +92,12 @@ async def resume_run(run_id: str, req: ResumeRequest) -> StreamingResponse:
             "message": f"run {run_id} 의 체크포인트가 없습니다. 새 Run 으로 다시 시작하세요.",
         })
 
-    # ② 대기 중인 도구 호출과 toolCallId 가 맞는가 — 어긋나면 다른 승인의 토큰이다
-    pending = _pending_tool_call_ids(snapshot)
-    if req.toolCallId not in pending:
+    # ② 지금 멈춰 있는 게 뭔가 — 그것이 재개 방식(승인/답변)을 결정한다
+    kind = _pending_kind(snapshot)
+    if kind is None:
         raise HTTPException(400, detail={
             "errorCode": None,
-            "message": f"toolCallId 불일치: {req.toolCallId} (대기 중: {sorted(pending)})",
+            "message": f"run {run_id} 은 대기 중인 중단점이 없습니다 (이미 종료됨).",
         })
 
     ctx = RunContext(
@@ -95,7 +105,29 @@ async def resume_run(run_id: str, req: ResumeRequest) -> StreamingResponse:
         approval_token=req.approvalToken,
         params_canonical=req.paramsCanonical.encode("utf-8") if req.paramsCanonical else None,
     )
-    gen = hitl.stream_resume(agent, req.decision, run_id, ctx, reason=req.reason)
+
+    if kind == "question":
+        if req.answer is None:
+            raise HTTPException(400, detail={
+                "errorCode": None,
+                "message": "question 대기 중입니다 — answer 필드가 필요합니다.",
+            })
+        gen = hitl.stream_answer(agent, req.answer, run_id, ctx)
+    else:
+        if req.decision not in ("APPROVED", "REJECTED"):
+            raise HTTPException(400, detail={
+                "errorCode": None,
+                "message": "approval 대기 중입니다 — decision(APPROVED|REJECTED)이 필요합니다.",
+            })
+        # toolCallId 가 대기 중인 도구 호출과 맞는가 — 어긋나면 다른 승인의 토큰이다
+        pending = _pending_tool_call_ids(snapshot)
+        if req.toolCallId not in pending:
+            raise HTTPException(400, detail={
+                "errorCode": None,
+                "message": f"toolCallId 불일치: {req.toolCallId} (대기 중: {sorted(pending)})",
+            })
+        gen = hitl.stream_resume(agent, req.decision, run_id, ctx, reason=req.reason)
+
     return StreamingResponse(_guard(gen), media_type="text/event-stream",
                              headers=_SSE_HEADERS)
 
@@ -109,6 +141,21 @@ async def _guard(gen):
             yield event
     except Exception as exc:                       # noqa: BLE001 — 최후 방어선
         yield sse.error(f"작업 중 오류가 발생했습니다: {type(exc).__name__}: {exc}")
+
+
+def _pending_kind(snapshot) -> str | None:
+    """멈춰 있는 interrupt 의 종류. question | approval | None(대기 없음).
+
+    ask_user 는 payload 에 kind="question" 표식을 심는다. 그 외의 interrupt 는
+    전부 미들웨어의 승인 대기다.
+    """
+    for task in getattr(snapshot, "tasks", ()) or ():
+        for intr in getattr(task, "interrupts", ()) or ():
+            v = intr.value
+            if isinstance(v, dict) and v.get("kind") == "question":
+                return "question"
+            return "approval"
+    return None
 
 
 def _pending_tool_call_ids(snapshot) -> set[str]:

@@ -54,6 +54,24 @@ async def _collect_sse(client: httpx.AsyncClient, method: str, url: str,
 GOAL = ("그룹웨어 프로젝트에 오늘(2026-08-04) 스프린트 리뷰 회의록 올려줘. "
         "참석자는 김서준, 이하늘. 목적은 진행 상황 공유, 내용은 백엔드 API 68% 완료.")
 
+# LLM 이 비결정적으로 question 을 먼저 물을 수 있다 — 이는 계약상 합법이라
+# (BE 도 언제든 question 을 처리해야 함) 테스트도 그 경우 답하고 계속 간다.
+FULL_INFO = ("그룹웨어 AI 고도화 프로젝트야. 제목 '스프린트 리뷰', 날짜 2026-08-04, "
+             "참석자 김서준·이하늘, 목적은 진행 상황 공유, 내용은 백엔드 API 68% 완료.")
+
+
+async def _start_until_approval(client, body, max_hops: int = 3):
+    """Run 을 시작하고, 중간 question 은 답해 가며 approval_request 까지 간다."""
+    events = await _collect_sse(client, "POST", "/api/agent/runs", body)
+    first_names = [n for n, _ in events]
+    hops = 0
+    while events[-1][0] == "question" and hops < max_hops:
+        events = await _collect_sse(client, "POST",
+                                    f"/api/agent/runs/{body['runId']}/resume",
+                                    {"answer": FULL_INFO})
+        hops += 1
+    return first_names, events
+
 
 async def main() -> None:
     try:
@@ -69,14 +87,14 @@ async def _scenarios() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://test",
                                  timeout=90) as client:
 
-        # ── ① Run 시작 → approval_request 에서 멈춤 ──────────
+        # ── ① Run 시작 → (question 허용) → approval_request ──
         body = _run_body(GOAL)
         run_id = body["runId"]
-        events = await _collect_sse(client, "POST", "/api/agent/runs", body)
+        first_names, events = await _start_until_approval(client, body)
 
         names = [n for n, _ in events]
         assert names[-1] == "approval_request", f"마지막 이벤트가 {names} 로 끝남"
-        assert "step" in names, f"step 이 한 번도 없음: {names}"
+        assert "step" in first_names, f"step 이 한 번도 없음: {first_names}"
 
         approval = events[-1][1]
         assert approval["tool"] == "meeting.create", approval
@@ -99,7 +117,8 @@ async def _scenarios() -> None:
 
         # ── ③ REJECTED 재개 → 저장 없이 done ─────────────────
         body = _run_body(GOAL)
-        events = await _collect_sse(client, "POST", "/api/agent/runs", body)
+        _, events = await _start_until_approval(client, body)
+        assert events[-1][0] == "approval_request", f"승인 도달 실패: {[n for n, _ in events]}"
         approval = events[-1][1]
         events = await _collect_sse(
             client, "POST", f"/api/agent/runs/{body['runId']}/resume",
@@ -122,7 +141,8 @@ async def _scenarios() -> None:
 
         # ── ⑤ toolCallId 불일치 → 400 ────────────────────────
         body = _run_body(GOAL)
-        events = await _collect_sse(client, "POST", "/api/agent/runs", body)
+        _, events = await _start_until_approval(client, body)
+        assert events[-1][0] == "approval_request", f"승인 도달 실패: {[n for n, _ in events]}"
         res = await client.post(f"/api/agent/runs/{body['runId']}/resume",
                                 json={"toolCallId": "tc_wrong", "decision": "APPROVED"})
         assert res.status_code == 400, res.status_code

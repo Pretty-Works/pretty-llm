@@ -132,6 +132,18 @@ async def stream_resume(agent, decision: str, run_id: str, ctx: RunContext,
         yield event
 
 
+async def stream_answer(agent, answer: str, run_id: str,
+                        ctx: RunContext) -> AsyncIterator[str]:
+    """question 에 대한 답으로 재개. resume 값이 ask_user 의 interrupt() 반환값이 된다.
+
+    승인 재개(decisions 봉투)와 형식이 다른 이유: 미들웨어 interrupt 는
+    decisions 목록을 기대하지만, 도구 안의 interrupt() 는 값을 그대로 돌려받는다.
+    """
+    command = Command(resume=answer)
+    async for event in _drive(agent, command, run_id, ctx):
+        yield event
+
+
 async def _drive(agent, agent_input, run_id: str, ctx: RunContext) -> AsyncIterator[str]:
     """두 세그먼트의 공통 몸통. 에이전트를 astream 으로 돌리며 이벤트로 변환한다."""
     config = {"configurable": {"thread_id": run_id}}
@@ -141,11 +153,18 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext) -> AsyncItera
 
     async for update in agent.astream(agent_input, config=config,
                                       context=ctx, stream_mode="updates"):
-        # ① 멈춤 — approval_request 를 내보내고 스트림을 닫는다.
+        # ① 멈춤 — 무엇이 멈췄는지에 따라 이벤트가 갈린다. 스트림은 둘 다 닫는다.
+        #    · 미들웨어가 쓰기 도구를 가로챔  → approval_request
+        #    · ask_user 가 스스로 interrupt() → question
         #    멈춘 위치는 checkpointer 가 이미 저장했다 (runId 로 복원 가능).
         if "__interrupt__" in update:
-            payload = _approval_payload(update["__interrupt__"], tool_call_ids)
-            yield sse.sse_event("approval_request", payload)
+            value = update["__interrupt__"][0].value
+            if isinstance(value, dict) and value.get("kind") == "question":
+                payload = {k: v for k, v in value.items() if k != "kind"}
+                yield sse.sse_event("question", payload)
+            else:
+                payload = _approval_payload(update["__interrupt__"], tool_call_ids)
+                yield sse.sse_event("approval_request", payload)
             return
 
         for node_output in update.values():
