@@ -126,10 +126,11 @@ async def _scenarios() -> None:
              "approvalToken": None, "reason": "참석자가 틀렸어요. 저장하지 마세요."},
         )
         names = [n for n, _ in events]
-        # 거절 후 에이전트는 ⓐ 포기하고 done, 또는 ⓑ 사유를 반영해 고친 안으로
-        # 다시 approval_request — 둘 다 규격이 허용하는 재제안 흐름이다.
+        # 거절 후 에이전트는 ⓐ 포기하고 done, ⓑ 사유를 반영한 재제안(approval_request),
+        # ⓒ 사유에 대한 되묻기(question) — 셋 다 규격이 허용하는 흐름이다.
         # 계약 위반은 "종료 이벤트 없이 끊기는 것"뿐.
-        assert names[-1] in ("done", "approval_request"), f"거절 후 비정상 종료: {names}"
+        assert names[-1] in ("done", "approval_request", "question"), \
+            f"거절 후 비정상 종료: {names}"
         print(f"✅ ③ 거절 재개: {names} → {names[-1]} 로 정상 종료 (재제안 허용)", flush=True)
 
         # ── ④ 없는 runId → 404 AGENT_016 ─────────────────────

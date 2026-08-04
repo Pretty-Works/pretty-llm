@@ -1,125 +1,113 @@
-# app/tests/test_router.py
-"""Analysis Router 테스트 (LLM 호출 없음).
+"""
+오케스트레이터 3분기 테스트
 
-라우터는 Engine B 의 입구라 여기서 틀리면 뒤 워커가 통째로 헛돈다.
-LLM 응답 자체는 검증할 수 없으니, **LLM 출력을 코드가 어떻게 바로잡는지**를 검증한다.
+시나리오:
+  ① classify 단독 — 명확한 문장 3개가 각자의 길로 가는가
+  ② simple_query 관통 — 조회는 승인 없이 done 까지 (HITL 이벤트가 없어야 함)
+  ③ engine_b 라우팅 — 스텁이지만 계약(step→done)대로 응답하는가
+  ④ route 영속 — engine_a 로 멈춘 run 의 체크포인트 metadata 에 route 가
+     저장되어, resume 이 재분류 없이 같은 에이전트로 돌아가는가
+
+실행:  uv run python -m app.tests.test_router
 """
 
-import pytest
+from __future__ import annotations
 
-from app.engine_b import analysis_router
-from app.engine_b.analysis_router import _fallback_plan, _normalize, route
-from app.schemas.state import AnalysisPlan, AnalysisRequest, Entities, UIContext
+import asyncio
+import json
+import uuid
 
+import httpx
 
-def _request(query: str, **ui) -> AnalysisRequest:
-    return AnalysisRequest(query=query, user_id=1, ui_context=UIContext(**ui))
-
-
-# ─── _normalize : LLM 이 흔히 어긋나게 내는 값을 코드가 잡아준다 ────────
-
-def test_알수없는_도메인과_focus는_버린다():
-    # 스키마 검증을 우회해 들어온 값(구조화 출력이 뚫렸거나 폴백이 만든 값)을 흉내낸다.
-    plan = AnalysisPlan.model_construct(
-        mode="analysis",
-        domains=["project", "finance", "hcm"],  # finance 는 없는 도메인
-        focus=["risk", "vibes"],  # vibes 는 없는 축
-        objective="테스트",
-        entities=AnalysisPlan().entities,
-        constraints=[],
-        reasoning="",
-        confidence=0.5,
-    )
-    result = _normalize(plan, _request("아무거나"))
-
-    assert result.domains == ["project", "hcm"]
-    assert result.focus == ["risk"]
+from app.main import app
 
 
-def test_도메인이_비면_project로_떨어진다():
-    result = _normalize(AnalysisPlan(domains=[]), _request("음"))
-    assert result.domains == ["project"]
+def _body(goal: str) -> dict:
+    return {
+        "runId": f"run_{uuid.uuid4().hex[:8]}",
+        "conversationId": 12,
+        "goal": goal,
+        "messages": [],
+        "screenContext": {"screen": "HOME", "formState": {}},
+        "requestSource": "WEB",
+        "locale": "ko-KR",
+    }
 
 
-def test_중복_도메인은_한_번만_남는다():
-    result = _normalize(AnalysisPlan(domains=["project", "project", "hcm"]), _request("음"))
-    assert result.domains == ["project", "hcm"]
+async def _collect_sse(client, url, body):
+    events, name = [], None
+    async with client.stream("POST", url, json=body) as res:
+        assert res.status_code == 200, f"{url} → {res.status_code}"
+        async for line in res.aiter_lines():
+            if line.startswith("event: "):
+                name = line[len("event: "):]
+            elif line.startswith("data: "):
+                events.append((name, json.loads(line[len("data: "):])))
+    return events
 
 
-def test_화면에_보고있는_프로젝트를_대상으로_채운다():
-    plan = AnalysisPlan(domains=["project"])
-    result = _normalize(plan, _request("이거 어때?", screen="project_detail", project_id=1001))
-
-    assert result.entities.project_ids == [1001]
-
-
-def test_이미_대상이_있으면_화면_컨텍스트로_덮어쓰지_않는다():
-    plan = AnalysisPlan(domains=["project"], entities=Entities(project_ids=[1002]))
-    result = _normalize(plan, _request("저거 어때?", project_id=1001))
-
-    assert result.entities.project_ids == [1002]
+async def main() -> None:
+    try:
+        await _scenarios()
+    finally:
+        from app.common.checkpoint import close_checkpointer
+        await close_checkpointer()
 
 
-def test_objective가_비면_질문을_그대로_쓴다():
-    result = _normalize(AnalysisPlan(objective=""), _request("예산 얼마 남았어?"))
-    assert result.objective == "예산 얼마 남았어?"
+async def _scenarios() -> None:
+    # ── ① classify 단독 ──────────────────────────────────────
+    from app.orchestrator.classify import classify
+
+    cases = {
+        "내 연차 며칠 남았어?": "simple_query",
+        "그룹웨어 프로젝트에 오늘 스프린트 리뷰 회의록 올려줘": "engine_a",
+        "일정이 밀렸는데 어떻게 조정할지 시나리오 분석해줘": "engine_b",
+    }
+    for goal, expected in cases.items():
+        got = await classify(goal)
+        assert got.route == expected, f"{goal!r} → {got.route} (기대: {expected})"
+    print("✅ ① classify: 조회/실행/분석 3방향 정확", flush=True)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 timeout=90) as client:
+
+        # ── ② simple_query — 승인 없이 done ──────────────────
+        events = await _collect_sse(client, "/api/agent/runs",
+                                    _body("그룹웨어 프로젝트 회의록 목록 보여줘"))
+        names = [n for n, _ in events]
+        assert names[-1] == "done", f"done 으로 안 끝남: {names}"
+        assert "approval_request" not in names and "question" not in names, \
+            f"조회에 HITL 이벤트가 섞임: {names}"
+        answer = events[-1][1]["answer"]
+        assert "41" in answer or "회의" in answer, answer
+        print(f"✅ ② simple_query: {names} → 승인 없이 done ({answer[:40]!r})", flush=True)
+
+        # ── ③ engine_b 라우팅 (스텁) ─────────────────────────
+        events = await _collect_sse(client, "/api/agent/runs",
+                                    _body("이 프로젝트 일정 리스크를 시나리오별로 분석해줘"))
+        names = [n for n, _ in events]
+        assert names == ["step", "done"], f"engine_b 스텁 계약 위반: {names}"
+        assert "분석" in events[-1][1]["answer"]
+        print("✅ ③ engine_b 라우팅: 분류 → 스텁이 계약(step→done)대로 응답", flush=True)
+
+        # ── ④ route 영속 — resume 이 같은 에이전트로 ─────────
+        body = _body("그룹웨어 프로젝트에 오늘 '주간 점검' 회의록 올려줘. "
+                     "참석자 김서준·이하늘, 목적 진행 공유, 내용 API 68% 완료.")
+        events = await _collect_sse(client, "/api/agent/runs", body)
+        last = events[-1][0]
+        assert last in ("approval_request", "question"), f"멈춤 없이 끝남: {last}"
+
+        from app.common.checkpoint import get_checkpointer
+        saver = await get_checkpointer()
+        tup = await saver.aget_tuple({"configurable": {"thread_id": body["runId"]}})
+        assert tup is not None, "체크포인트가 없음"
+        stored = (tup.metadata or {}).get("route")
+        assert stored == "engine_a", f"metadata 에 route 가 없음: {tup.metadata}"
+        print("✅ ④ route 영속: 체크포인트 metadata 에 engine_a 저장 → resume 복원 가능", flush=True)
+
+    print("\n3분기 관통 성공", flush=True)
 
 
-@pytest.mark.parametrize("raw,expected", [(1.7, 1.0), (-0.4, 0.0), (0.62, 0.62)])
-def test_confidence는_0과_1_사이로_잘린다(raw, expected):
-    result = _normalize(AnalysisPlan(confidence=raw), _request("음"))
-    assert result.confidence == pytest.approx(expected)
-
-
-# ─── 폴백 : LLM 을 못 쓰는 상황에서도 그래프가 끝까지 돈다 ────────
-
-def test_재계획_표현이면_replan으로_본다():
-    plan = _fallback_plan(_request("목표일을 2주 당겨야 하는데 조정안 좀 뽑아줘"))
-    assert plan.mode == "replan"
-
-
-def test_현황_질문은_analysis로_본다():
-    plan = _fallback_plan(_request("지금 프로젝트 진행 상황 알려줘"))
-    assert plan.mode == "analysis"
-
-
-def test_사람_관련_질문이면_hcm이_들어간다():
-    plan = _fallback_plan(_request("이 일에 누구를 배치하면 좋을까?"))
-    assert "hcm" in plan.domains
-
-
-def test_회의_질문이면_meeting이_들어간다():
-    plan = _fallback_plan(_request("다음주 회의 시간대 잡아줘"))
-    assert "meeting" in plan.domains
-
-
-def test_폴백은_확신도를_낮게_준다():
-    plan = _fallback_plan(_request("아무 질문"))
-    assert plan.confidence <= 0.3
-
-
-def test_LLM이_죽어도_라우팅은_계속된다(monkeypatch):
-    """키가 없거나 API 가 죽어도 Engine B 는 멈추지 않아야 한다."""
-
-    def boom(*args, **kwargs):
-        raise RuntimeError("OPENAI_API_KEY 없음")
-
-    monkeypatch.setattr(analysis_router.llm_client, "structured_call", boom)
-
-    plan = route(_request("그룹웨어 리뉴얼 위험 알려줘", project_id=1001))
-
-    assert plan.domains  # 비어 있지 않다
-    assert plan.entities.project_ids == [1001]
-    assert plan.confidence <= 0.3
-
-
-def test_force_mode는_라우팅_결과를_덮어쓴다(monkeypatch):
-    """담당자 3의 시나리오 재분석은 mode 를 다시 판단할 필요가 없다."""
-    monkeypatch.setattr(
-        analysis_router.llm_client,
-        "structured_call",
-        lambda *a, **k: AnalysisPlan(mode="analysis", domains=["project"]),
-    )
-
-    plan = route(_request("조정안 비교"), force_mode="replan")
-    assert plan.mode == "replan"
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -2,15 +2,17 @@
 에이전트 전용 API — 규격 v2 진입점 (BE ↔ FastAPI)
 
 POST /api/agent/runs                : Run 시작. goal 실행 → SSE 스트림
-POST /api/agent/runs/{runId}/resume : 승인/거절 후 재개 → SSE 스트림
+POST /api/agent/runs/{runId}/resume : 승인/거절/답변 후 재개 → SSE 스트림
 
 두 엔드포인트 다 응답은 text/event-stream 이다. 팀원들의 /api/v1/** (REST)
 와 별개 계약이라 prefix 를 공유하지 않는다.
 
-지금은 goal 이 무엇이든 회의록 에이전트로 직결한다(관통 우선).
-오케스트레이터 3분기가 준비되면 아래 get_agent() 한 줄이
-  route = classify(goal, screenContext) → HANDLERS[route]
-로 바뀐다. 이 파일에서 바뀌는 건 그 한 줄뿐이다.
+라우팅:
+  classify → simple_query | engine_a | engine_b  (+ 관련 도메인 목록)
+  engine_a 도메인 1개  → 그 도메인 에이전트로 직행
+  engine_a 도메인 2개+ → decompose 로 작업 분해 → composite 가 릴레이 실행
+  resume 은 goal 이 없으므로: 복합이면 계획 테이블, 단독이면 체크포인트
+  metadata(route·domain)에서 "어디로 돌아갈지"를 복원한다.
 """
 
 from __future__ import annotations
@@ -20,7 +22,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.common import hitl, sse
-from app.engine_a.meeting_agent import get_agent
+from app.common.checkpoint import get_checkpointer
+from app.orchestrator import composite, simple_query
+from app.orchestrator.classify import classify
+from app.orchestrator.domains import agent_for_domain
 from app.tools.registry import RunContext
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -54,7 +59,7 @@ class ResumeRequest(BaseModel):
     """승인 재개와 질문 답변 재개를 한 몸으로 받는다.
 
     대기 중인 게 approval 이면 toolCallId·decision 이 필수,
-    question 이면 answer 가 필수 — 검증은 엔드포인트에서 상태를 보고 한다.
+    question 이면 answer 가 필수 — 검증은 대기 상태를 보고 한다.
     (질문 답변의 정확한 필드명은 노션 재확인 때 최종 대조 — C 단계)
     """
     # 승인 재개용
@@ -71,28 +76,91 @@ class ResumeRequest(BaseModel):
 # ── 엔드포인트 ─────────────────────────────────────────────
 @router.post("/runs")
 async def start_run(req: RunRequest) -> StreamingResponse:
-    agent = await get_agent()
     ctx = RunContext(run_id=req.runId)
     history = [m.model_dump() for m in req.messages]
+    decision = await classify(req.goal, req.screenContext.screen, history)
 
-    gen = hitl.stream_run(agent, req.goal, history, req.runId, ctx)
+    # 화면 맥락을 goal 에 얹는다 — PROJECT_CREATE 화면의 실시간 폼 채움이
+    # 이 정보로 동작한다 (이미 입력된 필드는 다시 묻지 않기).
+    goal = req.goal
+    if req.screenContext.screen != "HOME" or req.screenContext.formState:
+        goal = (f"(현재 화면: {req.screenContext.screen}, "
+                f"입력된 폼 값: {req.screenContext.formState})\n{req.goal}")
+
+    if decision.route == "engine_b":
+        # 목요일에 팀원 그래프(run_engine_b) 어댑터로 교체 예정.
+        # 스텁도 계약(step→done)은 지킨다 — BE·FE 는 지금부터 붙어도 된다.
+        gen = _engine_b_stub(req)
+
+    elif decision.route == "simple_query":
+        agent = await simple_query.get_agent()
+        gen = hitl.stream_run(agent, goal, history, req.runId, ctx,
+                              route="simple_query")
+
+    else:                                            # engine_a
+        domains = decision.domains or ["meeting"]
+        subtasks = (await composite.decompose(goal, domains)
+                    if len(domains) > 1 else [])
+
+        if len(subtasks) > 1:                        # 복합 — 릴레이 실행
+            plan = {"subtasks": subtasks, "current": 0, "answers": []}
+            await composite.save_plan(req.runId, plan)
+            gen = composite.stream_composite(req.runId, ctx, plan)
+        else:                                        # 단독 — 도메인 에이전트 직행
+            domain = domains[0]
+            agent = await agent_for_domain(domain)
+            gen = hitl.stream_run(agent, goal, history, req.runId, ctx,
+                                  route="engine_a", domain=domain)
+
     return StreamingResponse(_guard(gen), media_type="text/event-stream",
                              headers=_SSE_HEADERS)
 
 
 @router.post("/runs/{run_id}/resume")
 async def resume_run(run_id: str, req: ResumeRequest) -> StreamingResponse:
-    agent = await get_agent()
+    ctx = RunContext(
+        run_id=run_id,
+        approval_token=req.approvalToken,
+        params_canonical=req.paramsCanonical.encode("utf-8") if req.paramsCanonical else None,
+    )
 
-    # ① 체크포인트가 있는가 — 없으면 이어붙일 실행이 없다 (규격 AGENT_016)
-    snapshot = await agent.aget_state({"configurable": {"thread_id": run_id}})
-    if not snapshot.values:
+    # ── 복합 실행이었나 — 계획 테이블이 기억한다 ──────────
+    plan = await composite.load_plan(run_id)
+    if plan and plan["current"] < len(plan["subtasks"]):
+        k = plan["current"]
+        st = plan["subtasks"][k]
+        agent = await agent_for_domain(st["domain"])
+        thread = composite.sub_thread(run_id, k)
+        snapshot = await agent.aget_state({"configurable": {"thread_id": thread}})
+        command = _validated_command(req, snapshot, run_id)
+        gen = composite.stream_composite(run_id, ctx, plan, resume_command=command)
+        return StreamingResponse(_guard(gen), media_type="text/event-stream",
+                                 headers=_SSE_HEADERS)
+
+    # ── 단독 실행 — 체크포인트 metadata 로 복원 ────────────
+    saver = await get_checkpointer()
+    tup = await saver.aget_tuple({"configurable": {"thread_id": run_id}})
+    if tup is None:
         raise HTTPException(404, detail={
             "errorCode": "AGENT_016",
             "message": f"run {run_id} 의 체크포인트가 없습니다. 새 Run 으로 다시 시작하세요.",
         })
+    meta = tup.metadata or {}
+    route = meta.get("route", "engine_a")
+    domain = meta.get("domain", "meeting")
 
-    # ② 지금 멈춰 있는 게 뭔가 — 그것이 재개 방식(승인/답변)을 결정한다
+    agent = (await simple_query.get_agent() if route == "simple_query"
+             else await agent_for_domain(domain))
+    snapshot = await agent.aget_state({"configurable": {"thread_id": run_id}})
+    command = _validated_command(req, snapshot, run_id)
+    gen = hitl.stream_command(agent, command, run_id, ctx, route=route, domain=domain)
+    return StreamingResponse(_guard(gen), media_type="text/event-stream",
+                             headers=_SSE_HEADERS)
+
+
+# ── 내부 ───────────────────────────────────────────────────
+def _validated_command(req: ResumeRequest, snapshot, run_id: str):
+    """대기 상태(approval/question)와 재개 요청이 맞는지 검증하고 Command 를 만든다."""
     kind = _pending_kind(snapshot)
     if kind is None:
         raise HTTPException(400, detail={
@@ -100,39 +168,42 @@ async def resume_run(run_id: str, req: ResumeRequest) -> StreamingResponse:
             "message": f"run {run_id} 은 대기 중인 중단점이 없습니다 (이미 종료됨).",
         })
 
-    ctx = RunContext(
-        run_id=run_id,
-        approval_token=req.approvalToken,
-        params_canonical=req.paramsCanonical.encode("utf-8") if req.paramsCanonical else None,
-    )
-
     if kind == "question":
         if req.answer is None:
             raise HTTPException(400, detail={
                 "errorCode": None,
                 "message": "question 대기 중입니다 — answer 필드가 필요합니다.",
             })
-        gen = hitl.stream_answer(agent, req.answer, run_id, ctx)
-    else:
-        if req.decision not in ("APPROVED", "REJECTED"):
-            raise HTTPException(400, detail={
-                "errorCode": None,
-                "message": "approval 대기 중입니다 — decision(APPROVED|REJECTED)이 필요합니다.",
-            })
-        # toolCallId 가 대기 중인 도구 호출과 맞는가 — 어긋나면 다른 승인의 토큰이다
-        pending = _pending_tool_call_ids(snapshot)
-        if req.toolCallId not in pending:
-            raise HTTPException(400, detail={
-                "errorCode": None,
-                "message": f"toolCallId 불일치: {req.toolCallId} (대기 중: {sorted(pending)})",
-            })
-        gen = hitl.stream_resume(agent, req.decision, run_id, ctx, reason=req.reason)
+        return hitl.build_resume_command("question", answer=req.answer)
 
-    return StreamingResponse(_guard(gen), media_type="text/event-stream",
-                             headers=_SSE_HEADERS)
+    if req.decision not in ("APPROVED", "REJECTED"):
+        raise HTTPException(400, detail={
+            "errorCode": None,
+            "message": "approval 대기 중입니다 — decision(APPROVED|REJECTED)이 필요합니다.",
+        })
+    pending = _pending_tool_call_ids(snapshot)
+    if req.toolCallId not in pending:
+        raise HTTPException(400, detail={
+            "errorCode": None,
+            "message": f"toolCallId 불일치: {req.toolCallId} (대기 중: {sorted(pending)})",
+        })
+    return hitl.build_resume_command("approval", decision=req.decision, reason=req.reason)
 
 
-# ── 내부 ───────────────────────────────────────────────────
+async def _engine_b_stub(req: RunRequest):
+    """engine_b 라우팅 스텁 — 분류가 맞는지 계약대로 응답만 한다.
+
+    목요일에 app/engine_b/runner.run_engine_b 를 v2 이벤트로 번역하는
+    어댑터로 교체된다 (그들의 data:{"step":...} 형식 → 우리 step 이벤트).
+    """
+    yield sse.step("분석 요청을 확인하는 중...")
+    yield sse.sse_event("done", {
+        "answer": "이 요청은 심층 분석(Engine B) 대상으로 분류되었습니다. "
+                  "분석 엔진 연결이 완료되면 결과를 제공해 드릴게요.",
+        "action": None,
+    })
+
+
 async def _guard(gen):
     """스트림이 done/approval_request 없이 죽으면 BE 가 AGENT_017 로 판정한다.
     그래서 무슨 예외가 나든 마지막에 error 이벤트 하나는 반드시 내보낸다."""
