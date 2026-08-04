@@ -109,11 +109,15 @@ _STEP_TEXT = {
 def build_resume_command(kind: str, decision: str | None = None,
                          reason: str | None = None,
                          answer: str | None = None,
-                         alternative_id: str | None = None) -> Command:
+                         alternative_id: str | None = None,
+                         n_requests: int = 1) -> Command:
     """재개 입력을 Command 로 조립한다. kind: approval | question
 
     형식이 둘인 이유: 미들웨어 interrupt(승인)는 decisions 목록 봉투를
     기대하지만, ask_user 안의 interrupt()(질문)는 값을 그대로 돌려받는다.
+
+    n_requests: 대기 중인 승인 요청 수. 미들웨어는 요청 수만큼 decision 을
+    요구하므로 (LLM 이 병렬 쓰기를 한 경우) 같은 결정을 복제한다.
     """
     if kind == "question":
         return Command(resume=answer)
@@ -130,7 +134,7 @@ def build_resume_command(kind: str, decision: str | None = None,
         d = {"type": "reject"}
         if reason:
             d["message"] = reason    # 에이전트가 사유를 읽고 대안을 답한다
-    return Command(resume={"decisions": [d]})
+    return Command(resume={"decisions": [d] * max(1, n_requests)})
 
 
 async def stream_run(agent, goal: str, history: list[dict], run_id: str,

@@ -186,9 +186,12 @@ def _validated_command(req: ResumeRequest, snapshot, run_id: str):
     pending = _pending_tool_call_ids(snapshot)
     if req.toolCallId not in pending:
         raise HTTPException(400, detail="toolCallId mismatch")     # 규격 예시 문자열
+    # LLM 이 드물게 한 턴에 쓰기 도구를 여러 번 부르면 대기 요청도 여러 개다.
+    # 미들웨어는 요청 수만큼 decision 을 요구하므로 같은 결정을 복제해 채운다.
     return hitl.build_resume_command("approval", decision=req.decision,
                                      reason=req.reason,
-                                     alternative_id=req.alternativeId)
+                                     alternative_id=req.alternativeId,
+                                     n_requests=_pending_request_count(snapshot))
 
 
 async def _engine_b_stub(req: RunRequest):
@@ -213,6 +216,16 @@ async def _guard(gen):
             yield event
     except Exception as exc:                       # noqa: BLE001 — 최후 방어선
         yield sse.error(f"작업 중 오류가 발생했습니다: {type(exc).__name__}: {exc}")
+
+
+def _pending_request_count(snapshot) -> int:
+    """대기 중인 미들웨어 승인 요청 수 (보통 1, LLM 이 병렬 쓰기를 하면 2+)."""
+    for task in getattr(snapshot, "tasks", ()) or ():
+        for intr in getattr(task, "interrupts", ()) or ():
+            v = intr.value
+            if isinstance(v, dict):
+                return max(1, len(v.get("action_requests") or []))
+    return 1
 
 
 def _pending_kind(snapshot) -> str | None:

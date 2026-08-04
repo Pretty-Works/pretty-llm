@@ -12,12 +12,16 @@ meeting_agent 가 받는다 — 수요일(D)에 채워진다.
 from __future__ import annotations
 
 from app.engine_a import leave_agent, meeting_agent, project_agent
+from app.engine_a.domain_agents import (get_expense_agent, get_schedule_agent,
+                                        get_task_agent)
 
 _FACTORY = {
     "meeting": meeting_agent.get_agent,
     "vacation": leave_agent.get_agent,
-    "project": project_agent.get_agent,     # 생성 대화 = FILL_FORM 전용
-    # 수요일(D) 추가 예정: "task" · "schedule" · "expense"
+    "project": project_agent.get_agent,     # 생성은 FILL_FORM, 마일스톤 토글은 승인
+    "task": get_task_agent,
+    "schedule": get_schedule_agent,
+    "expense": get_expense_agent,
 }
 
 DEFAULT_DOMAIN = "meeting"
