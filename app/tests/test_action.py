@@ -54,7 +54,7 @@ async def _drive_to_done(client, run_id, events, answer_text, max_hops=6):
         if kind == "done":
             return payload
         if kind == "question":
-            body = {"answer": answer_text}
+            body = {"questionId": 1, "selectedIds": [], "text": answer_text}
         elif kind == "approval_request":
             body = {"toolCallId": payload["toolCallId"], "decision": "APPROVED",
                     "approvalToken": "apv_test"}

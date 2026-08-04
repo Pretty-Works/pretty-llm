@@ -55,7 +55,7 @@ async def _resume_until_terminal(client, run_id, first_events, answer_text,
         if kind == "done":
             return events
         if kind == "question":
-            body = {"answer": answer_text}
+            body = {"questionId": 1, "selectedIds": [], "text": answer_text}
         elif kind == "approval_request":
             if not approve:
                 return events
@@ -104,7 +104,7 @@ async def _scenarios() -> None:
         from app.orchestrator.composite import load_plan
         while events[-1][0] == "question":
             events = await _collect_sse(client, f"/api/agent/runs/{run_id}/resume",
-                                        {"answer": ANSWER})
+                                        {"questionId": 1, "selectedIds": [], "text": ANSWER})
         assert events[-1][0] == "approval_request", f"승인 대기 아님: {names}"
         assert events[-1][1]["tool"] == "leave.create", events[-1][1]
         plan = await load_plan(run_id)
@@ -128,7 +128,7 @@ async def _scenarios() -> None:
         events = await _collect_sse(client, "/api/agent/runs", body)
         while events[-1][0] == "question":
             events = await _collect_sse(client, f"/api/agent/runs/{body['runId']}/resume",
-                                        {"answer": "2026-08-12 하루, ANNUAL, 사유는 병원 방문"})
+                                        {"questionId": 1, "selectedIds": [], "text": "2026-08-12 하루, ANNUAL, 사유는 병원 방문"})
         assert events[-1][0] == "approval_request", [n for n, _ in events]
         assert events[-1][1]["tool"] == "leave.create", events[-1][1]
 

@@ -89,11 +89,10 @@ def _shape(result: dict, thread_id: str) -> dict:
 #  예외 처리는 여기서 하지 않는다 — api 층이 감싸서 error 이벤트를 보장한다.
 # ═══════════════════════════════════════════════════════════
 
-import itertools
 from collections.abc import AsyncIterator
 
 from app.common import sse
-from app.tools.registry import RunContext, build_request, catalog_name
+from app.tools.registry import WRITE_TOOLS, RunContext, build_request, catalog_name
 
 # 도구 이름 → 사용자에게 보여줄 진행 문구 (step.text 는 FE 에 그대로 노출됨)
 _STEP_TEXT = {
@@ -103,14 +102,14 @@ _STEP_TEXT = {
     "meeting_create": "회의록을 저장하는 중...",
 }
 
-# approvalId 는 우리가 발급하는 일련번호. (BE 확인사항: BE 가 자체 키로 다시
-# 붙인다면 이 값은 참조용이 된다 — 규격 예시가 int 라 int 로 맞춰둠)
-_approval_seq = itertools.count(1)
+# approvalId·questionId 는 우리가 만들지 않는다 — BE 가 주입한다 (규격 명시:
+# "questionId: BE가 주입한다. LLM은 보내지 않는다". approval 도 동일 구조)
 
 
 def build_resume_command(kind: str, decision: str | None = None,
                          reason: str | None = None,
-                         answer: str | None = None) -> Command:
+                         answer: str | None = None,
+                         alternative_id: str | None = None) -> Command:
     """재개 입력을 Command 로 조립한다. kind: approval | question
 
     형식이 둘인 이유: 미들웨어 interrupt(승인)는 decisions 목록 봉투를
@@ -119,9 +118,18 @@ def build_resume_command(kind: str, decision: str | None = None,
     if kind == "question":
         return Command(resume=answer)
 
-    d: dict = {"type": "approve" if decision == "APPROVED" else "reject"}
-    if d["type"] == "reject" and reason:
-        d["message"] = reason        # 에이전트가 사유를 읽고 대안을 답한다
+    if decision == "APPROVED":
+        d: dict = {"type": "approve"}
+    elif decision == "ALTERNATIVE":
+        # 미들웨어 어휘에 ALTERNATIVE 가 없으므로 reject + 지시문으로 전달.
+        # 규격: 이때 토큰이 없으므로 그 도구를 실행하면 안 된다 (AGENT_014).
+        d = {"type": "reject",
+             "message": (f"사용자가 저장 대신 대안 '{alternative_id}' 를 선택했습니다. "
+                         "이 도구를 다시 부르지 말고, 그 대안의 방식으로 마무리하세요.")}
+    else:                            # REJECTED
+        d = {"type": "reject"}
+        if reason:
+            d["message"] = reason    # 에이전트가 사유를 읽고 대안을 답한다
     return Command(resume={"decisions": [d]})
 
 
@@ -216,12 +224,11 @@ def _approval_payload(interrupts, tool_call_ids: dict[str, str]) -> dict:
     #   여기서 방출한 params 와 실행 시 보낼 바디가 항상 같아야 한다 (AGENT_015).
     _method, _path, params = build_request(tool_name, args)
 
-    # summary: 미들웨어 description(요청별 → 전체 순) → 없으면 기본 문구
+    # summary: 미들웨어 description(요청별 → 전체 순) → 없으면 기본 문구. 60자 제한
     desc = req.get("description") or (value.get("description") if isinstance(value, dict) else "")
-    summary = str(desc).strip() or f"{catalog_name(tool_name)} 실행 승인 요청"
+    summary = (str(desc).strip() or f"{catalog_name(tool_name)} 실행 승인 요청")[:60]
 
-    return {
-        "approvalId": next(_approval_seq),
+    payload = {
         "toolCallId": tool_call_ids.get(tool_name, ""),
         "tool": catalog_name(tool_name),
         "access": "WRITE",               # 조회는 interrupt 대상이 아니므로 항상 WRITE
@@ -229,3 +236,8 @@ def _approval_payload(interrupts, tool_call_ids: dict[str, str]) -> dict:
         "previewText": "\n".join(f"· {k}: {v}" for k, v in params.items() if v is not None),
         "params": params,
     }
+    # 승인/거절 외의 제3 선택지 (규격: 선택 필드, {id,label}. "ALWAYS" id 는 BE 예약)
+    alternatives = WRITE_TOOLS.get(tool_name, {}).get("alternatives")
+    if alternatives:
+        payload["alternatives"] = alternatives
+    return payload

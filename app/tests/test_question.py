@@ -67,7 +67,9 @@ async def _scenarios() -> None:
                 break
         assert names[-1] == "question", f"3회 모두 question 없이 종료: {names}"
         q = events[-1][1]
-        for field in ("questionId", "label", "text", "options", "multiple", "allowFreeText"):
+        # questionId 는 BE 가 주입하므로 우리 이벤트에 없어야 한다 (규격)
+        assert "questionId" not in q, f"questionId 는 BE 몫: {q}"
+        for field in ("label", "text", "options", "multiple", "allowFreeText"):
             assert field in q, f"question 에 {field} 없음: {q}"
         print(f"✅ ① 모호한 goal → question: {q['label']!r} / {q['text'][:40]!r}", flush=True)
 
@@ -75,7 +77,7 @@ async def _scenarios() -> None:
         res = await client.post(f"/api/agent/runs/{run_id}/resume",
                                 json={"toolCallId": "tc_x", "decision": "APPROVED"})
         assert res.status_code == 400, res.status_code
-        assert "answer" in res.json()["detail"]["message"]
+        assert "selectedIds" in res.json()["detail"]
         print("✅ ② question 대기에 decision → 400 (재개 방식 검증)", flush=True)
 
         # ── ③ answer 재개 → (추가 질문 허용) → approval 도달 ──
@@ -83,7 +85,7 @@ async def _scenarios() -> None:
         for hop in range(4):
             events = await _collect_sse(client, "POST",
                                         f"/api/agent/runs/{run_id}/resume",
-                                        {"answer": ANSWER})
+                                        {"questionId": 1, "selectedIds": [], "text": ANSWER})
             last = events[-1][0]
             if last != "question":
                 break
