@@ -7,3 +7,6 @@ __pycache__/
 
 # HITL checkpointer (승인 대기 상태 — 로컬 실행 데이터)
 data/
+
+# 로컬 작업 문서 (커밋 안 함)
+docs/
