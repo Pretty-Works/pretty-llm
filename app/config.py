@@ -1,60 +1,106 @@
+# app/config.py
+"""전역 설정.
+
+.env 를 읽어 앱 전체가 공유하는 설정값을 만든다.
+Engine A / Engine B / Orchestrator 모두 여기서 값을 가져다 쓴다.
+
+앱 계층은 `settings`, 엔진·워커는 `get_settings()` 를 쓴다. 같은 인스턴스다.
+pydantic-settings v2 라 필드명 대문자가 곧 환경변수명이다.
 """
-설정값 창고
 
-민감한 값(API 키 등)과 환경마다 달라지는 값(백엔드 주소 등)을 코드에 박지 않고
-.env 파일에서 읽어 한곳에 모은다. 앱 전체가 `from app.config import settings` 로 사용.
-
-담당자 1. Pydantic Settings v2.
-"""
-
-from __future__ import annotations
+from datetime import date
+from functools import lru_cache
 
 from dotenv import load_dotenv
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# .env 를 os.environ 에 로드한다. (교재의 load_dotenv 방식)
-# langchain init_chat_model 이 OPENAI_API_KEY 를 환경변수에서 자동으로 읽으므로,
-# API 키는 여기서 따로 관리하지 않고 환경변수로만 둔다.
+# langchain 이 OPENAI_API_KEY 를 환경변수에서 직접 읽는 경로가 있어 먼저 로드해 둔다.
 load_dotenv()
 
 
 class Settings(BaseSettings):
+    """환경변수로 주입되는 런타임 설정."""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore",          # .env에 정의 안 한 키가 있어도 무시
+        extra="ignore",  # .env 에 정의 안 한 키가 있어도 무시
     )
 
-    # ── 앱 기본 ──
+    # ─── 앱 기본 ──────────────────────────────────────────────────
     app_name: str = "pretty-llm agent server"
     debug: bool = False
 
-    # ── LLM ──
-    #   API 키는 .env 의 OPENAI_API_KEY 로 두면 langchain 이 자동 사용.
-    llm_provider: str = "openai"              # openai | anthropic | google
-    llm_model: str = "gpt-4o-mini"            # 실제 모델명은 팀 합의 후 확정
-    llm_api_key: str | None = None            # 엔진 B 쪽이 명시 참조. None 이면 환경변수 폴백
-    llm_timeout_s: float = 30.0
+    # ─── LLM ──────────────────────────────────────────────────────
+    llm_provider: str = "openai"   # openai | anthropic | google
+    llm_model: str = "gpt-4o-mini"  # 단일 모델을 쓰는 코드용
+    # Engine B 는 호출량이 많은 워커와 판단이 중요한 라우터/합성을 나눠 쓴다.
+    llm_model_worker: str = "gpt-4o-mini"
+    llm_model_reasoning: str = "gpt-4o"
+    openai_model: str = "gpt-4o"   # api/meeting.py
+    llm_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),
+    )
+    llm_temperature: float = 0.0
+    llm_timeout: int = 60
+    llm_timeout_s: float = 30.0    # dependencies.py 의 httpx 타임아웃
     llm_max_retries: int = 2
 
-    # ── 백엔드 연동 (내부 도구 API = /api/internal/agent/**) ──
-    #   규격: ⭐ 내부 도구 API 공동 규격 (FastAPI → Spring)
+    # ─── 백엔드 연동 (내부 도구 API = /api/internal/agent/**) ─────
     backend_base_url: str = "http://localhost:3001"   # Spring BE
     internal_api_key: str = ""                        # X-Internal-Api-Key. 아직 미수령
     mock_backend: bool = True                         # true면 HTTP 없이 고정값 반환
     backend_connect_timeout_s: float = 3.0
     backend_read_timeout_s: float = 20.0
-    tool_call_limit: int = 20                         # 실행당 도구 호출 상한 (규격 §6)
+    backend_timeout: int = 10
+    backend_token: str | None = None
+    tool_call_limit: int = 20      # 실행당 도구 호출 상한 (규격 §6)
 
-    # ── HITL checkpointer (승인 대기 상태 보관) ──
+    # ─── HITL checkpointer (승인 대기 상태 보관) ──────────────────
     #   InMemorySaver 를 쓰면 서버 재시작 시 승인 대기 건이 사라져
     #   2차 요청(resume)이 thread_id 를 못 찾는다. Docker 재배포마다 터지므로 파일로 둔다.
     checkpoint_db: str = "data/checkpoints.sqlite"
 
-    # ── Engine B 안전장치 ──
-    worker_max_tool_calls: int = 5            # Worker당 Tool 자율호출 상한
-    replan_max_retries: int = 5               # HITL replan 재시도 상한
+    # ─── Engine B 동작 파라미터 ───────────────────────────────────
+    # 워커 1개가 근거 확보를 위해 자율적으로 툴을 호출할 수 있는 최대 횟수
+    worker_max_tool_calls: int = 5
+    # Validator 위반 시 워커를 다시 돌리는 최대 횟수
+    validator_max_retries: int = 2
+    # HITL 에서 사용자가 조정안을 거절하고 재생성을 요청할 수 있는 최대 횟수
+    replan_max_retries: int = 5
+    # 이 값을 넘으면 과부하로 본다 (1.0 = 정원 100%)
+    over_allocation_threshold: float = 1.2
+    # 마감 임박 판정 기준(일)
+    due_soon_days: int = 7
+    # 워커 confidence 가 이 값 미만이면 Validator 가 warning 을 붙인다
+    low_confidence_threshold: float = 0.45
+
+    # ─── 기타 ─────────────────────────────────────────────────────
+    log_level: str = "INFO"
+    # 데모/테스트 재현성을 위해 "오늘"을 고정하고 싶을 때 (YYYY-MM-DD)
+    as_of_override: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("AS_OF", "AS_OF_OVERRIDE"),
+    )
+
+    @property
+    def uses_fixtures(self) -> bool:
+        """툴이 백엔드 대신 demo_data 픽스처를 쓸지."""
+        return self.mock_backend or not self.backend_base_url
+
+    def as_of(self) -> date:
+        """분석 기준일. 미지정 시 시스템 오늘 날짜."""
+        if self.as_of_override:
+            return date.fromisoformat(self.as_of_override)
+        return date.today()
 
 
-# 앱 전체가 공유하는 단일 인스턴스
-settings = Settings()
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()
+
+
+# main.py 용. 임포트 시점 스냅샷이라 엔진·워커·테스트는 get_settings() 를 쓴다.
+settings = get_settings()
