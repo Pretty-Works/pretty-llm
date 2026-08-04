@@ -30,13 +30,16 @@ async def project_search(keyword: str, runtime: ToolRuntime[RunContext]) -> str:
     r = await backend.get("/projects", run_id=runtime.context.run_id, keyword=keyword)
     items = r.get("projects", [])
     if not items:
-        return f"'{keyword}' 로 참여 중인 프로젝트를 찾지 못했습니다."
+        return f"'{keyword}' 로 참여 중인 프로젝트를 찾지 못했습니다. 이름을 다시 확인해 주세요."
 
-    lines = [
-        f"- [{p['projectId']}] {p['name']} ({p['startDate']} ~ {p['endDate']})"
-        for p in items
-    ]
-    return f"참여 중인 프로젝트 {r.get('totalCount', len(items))}건:\n" + "\n".join(lines)
+    lines = []
+    for p in items:
+        role = "오너" if p.get("isOwner") else (p.get("myRole") or "참여자")
+        locked = "" if p.get("isOpenForContent", True) else " ⚠️쓰기 잠김(완료·보관 프로젝트)"
+        lines.append(f"- [{p['projectId']}] {p['name']} · {p['status']} · "
+                     f"기간 {p['startDate']}~{p['targetDate']} · 내 역할: {role}{locked}")
+    return (f"참여 중인 프로젝트 {r.get('totalCount', len(items))}건 "
+            f"(할일·회의·지출 날짜는 이 기간 안이어야 함):\n" + "\n".join(lines))
 
 
 @tool
@@ -54,10 +57,11 @@ async def project_members(projectId: int, runtime: ToolRuntime[RunContext]) -> s
     if not items:
         return f"프로젝트 {projectId} 의 참여자가 없습니다."
 
-    lines = [
-        f"- [{m['userId']}] {m['name']} ({m.get('department', '')} · {m.get('position', '')})"
-        for m in items
-    ]
+    lines = []
+    for m in items:
+        me = " ★본인 — 회의록 참석자에 넣지 말 것" if m.get("isMe") else ""
+        lines.append(f"- [{m['userId']}] {m['name']} ({m.get('department', '')} · "
+                     f"{m.get('position', '')}{', ' + m['role'] if m.get('role') else ''}){me}")
     return f"참여자 {r.get('totalCount', len(items))}명:\n" + "\n".join(lines)
 
 

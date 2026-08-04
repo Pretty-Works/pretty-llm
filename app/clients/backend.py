@@ -167,50 +167,197 @@ class BackendClient:
 #   settings.mock_backend = False 로 끄면 실제 호출로 바뀐다.
 # ─────────────────────────────────────────────────────────────
 def _mock_get(path: str, params: dict[str, Any]) -> Any:
+    """조회 mock — 응답 형태는 노션 개별 명세(docs/tool_specs_read.md)와 동일하게 유지한다."""
+    if path == "/me":
+        return {"userId": 5, "name": "이하늘", "department": "백엔드개발", "position": "사원",
+                "canCreateProject": True, "today": "2026-08-05", "todayDayOfWeek": "WEDNESDAY",
+                "thisWeekStart": "2026-08-03", "thisWeekEnd": "2026-08-09"}
+    if path == "/users":
+        users = [
+            {"userId": 2, "name": "김서준", "department": "프로젝트관리", "position": "팀장", "isMe": False},
+            {"userId": 5, "name": "이하늘", "department": "백엔드개발", "position": "사원", "isMe": True},
+            {"userId": 7, "name": "정우진", "department": "프론트개발", "position": "선임", "isMe": False},
+            {"userId": 9, "name": "박지원", "department": "디자인", "position": "사원", "isMe": False},
+        ]
+        kw = params.get("keyword", "")
+        hits = [u for u in users if kw in u["name"]]
+        return {"users": hits, "totalCount": len(hits), "truncated": False}
     if path == "/projects":
         return {
             "projects": [
-                {"projectId": 3, "name": "그룹웨어 AI 고도화",
-                 "startDate": "2026-06-01", "endDate": "2026-09-30", "canEdit": True},
-                {"projectId": 7, "name": "검색 고도화",
-                 "startDate": "2026-07-01", "endDate": "2026-12-31", "canEdit": True},
+                {"projectId": 3, "name": "그룹웨어 AI 고도화", "status": "ONGOING",
+                 "startDate": "2026-06-01", "targetDate": "2026-09-30", "myRole": "백엔드",
+                 "isOwner": False, "targetBudget": 30000000, "isOpenForContent": True},
+                {"projectId": 7, "name": "검색 고도화", "status": "ONGOING",
+                 "startDate": "2026-07-01", "targetDate": "2026-12-31", "myRole": None,
+                 "isOwner": True, "targetBudget": 0, "isOpenForContent": True},
             ],
             "totalCount": 2, "truncated": False,
         }
     if path.endswith("/members"):
         return {
+            "projectId": 3,
             "members": [
-                {"userId": 2, "name": "김서준", "department": "프로젝트관리", "position": "팀장"},
-                {"userId": 5, "name": "이하늘", "department": "백엔드개발", "position": "사원"},
-                {"userId": 7, "name": "정우진", "department": "프론트개발", "position": "선임"},
+                {"userId": 2, "name": "김서준", "department": "프로젝트관리", "position": "팀장",
+                 "role": "PM", "isOwner": True, "isMe": False},
+                {"userId": 5, "name": "이하늘", "department": "백엔드개발", "position": "사원",
+                 "role": "백엔드", "isOwner": False, "isMe": True},
+                {"userId": 7, "name": "정우진", "department": "프론트개발", "position": "선임",
+                 "role": "프론트", "isOwner": False, "isMe": False},
             ],
             "totalCount": 3, "truncated": False,
         }
+    if path.endswith("/milestones"):
+        return {
+            "projectId": 3,
+            "milestones": [
+                {"milestoneId": 11, "goal": "1차 스프린트 완료", "targetDate": "2026-07-15",
+                 "completed": True, "completedAt": "2026-07-15T18:00:00", "isOverdue": False, "isNext": False},
+                {"milestoneId": 12, "goal": "베타 오픈", "targetDate": "2026-08-20",
+                 "completed": False, "completedAt": None, "isOverdue": False, "isNext": True},
+            ],
+            "summary": {"total": 2, "completed": 1, "completionRate": 50, "overdueCount": 0},
+            "totalCount": 2, "truncated": False,
+        }
+    if path == "/tasks":
+        return {
+            "weekStart": "2026-08-03", "weekEnd": "2026-08-09",
+            "scope": "PROJECT" if params.get("projectId") else "MINE",
+            "tasks": [
+                {"taskId": 58, "content": "API 명세 정리", "dueDate": "2026-08-07",
+                 "completed": False, "isCarryOver": False, "canEdit": True,
+                 "assigneeId": 5, "assigneeName": "이하늘", "projectId": 3, "projectName": "그룹웨어 AI 고도화"},
+                {"taskId": 51, "content": "지난주 리뷰 반영", "dueDate": "2026-08-01",
+                 "completed": False, "isCarryOver": True, "canEdit": True,
+                 "assigneeId": 5, "assigneeName": "이하늘", "projectId": None, "projectName": None},
+            ],
+            "summary": {"total": 2, "completed": 0, "completionRate": 0, "carryOverCount": 1},
+            "totalCount": 2, "truncated": False,
+        }
+    if "/meetings/" in path:                       # meeting.detail
+        return {
+            "meetingId": 41, "projectId": 3, "documentNo": "MTG-2026-0041",
+            "title": "스프린트 리뷰 3차", "meetingDate": "2026-07-29",
+            "location": "프로젝트룸 A", "purpose": "진행 점검",
+            "content": "백엔드 API 60% 완료. 프론트 연동 지연 논의.",
+            "followUp": "API 명세 문서화(이하늘), 연동 테스트 일정 확정(정우진)",
+            "authorId": 2, "authorName": "김서준", "isMine": False, "canEdit": True,
+            "attendees": [
+                {"userId": 5, "name": "이하늘", "department": "백엔드개발"},
+                {"userId": 7, "name": "정우진", "department": "프론트개발"},
+            ],
+        }
     if path.endswith("/meetings"):
         return {
+            "projectId": 3,
             "meetings": [
-                {"meetingId": 41, "title": "스프린트 리뷰 3차",
-                 "meetingDate": "2026-07-29", "canEdit": True},
+                {"meetingId": 41, "title": "스프린트 리뷰 3차", "meetingDate": "2026-07-29",
+                 "location": "프로젝트룸 A", "purpose": "진행 점검",
+                 "authorName": "김서준", "attendeeNames": ["이하늘", "정우진"]},
             ],
             "totalCount": 1, "truncated": False,
         }
+    if path.endswith("/budget"):
+        return {
+            "projectId": 3, "targetBudget": 30000000, "spentAmount": 18600000,
+            "remainingAmount": 11400000, "executionRate": 62, "elapsedRate": 54, "expenseCount": 14,
+            "byCategory": [
+                {"category": "OUTSOURCING", "categoryLabel": "외주비", "amount": 12000000, "share": 65},
+                {"category": "MEAL", "categoryLabel": "식비", "amount": 3600000, "share": 19},
+                {"category": "SOFTWARE", "categoryLabel": "소프트웨어", "amount": 3000000, "share": 16},
+            ],
+        }
+    if path.endswith("/expenses"):
+        return {
+            "expenses": [
+                {"expenseId": 101, "expenseDate": "2026-07-28", "category": "MEAL",
+                 "categoryLabel": "식비", "merchant": "한경식당", "purpose": "팀 회식",
+                 "amount": 120000, "spenderName": "김서준", "canEdit": False},
+                {"expenseId": 102, "expenseDate": "2026-08-01", "category": "SOFTWARE",
+                 "categoryLabel": "소프트웨어", "merchant": "젯브레인", "purpose": "IDE 라이선스",
+                 "amount": 350000, "spenderName": "이하늘", "canEdit": True},
+            ],
+            "totalCount": 2, "truncated": False,
+        }
+    if path == "/schedules":
+        return {
+            "from": params.get("from"), "to": params.get("to"),
+            "schedules": [
+                {"scheduleId": 61, "title": "주간 스크럼", "startAt": "2026-08-06T10:00:00",
+                 "endAt": "2026-08-06T10:30:00", "allDay": False, "type": "MEETING",
+                 "canEdit": True, "participantNames": ["이하늘", "김서준"], "isLeave": False},
+                {"scheduleId": 74, "title": "연차", "startAt": "2026-08-11T00:00:00",
+                 "endAt": "2026-08-11T23:59:59", "allDay": True, "type": "LEAVE",
+                 "canEdit": True, "participantNames": ["이하늘"], "isLeave": True},
+            ],
+            "totalCount": 2, "truncated": False,
+        }
     if path == "/leaves/balance":
-        return {"year": 2026, "total": 15, "used": 3, "remaining": 12}
-    if path == "/me":
-        return {"userId": 5, "name": "이하늘", "department": "백엔드개발", "position": "사원"}
+        return {"year": int(params.get("year", 2026)), "grantedDays": 15, "usedDays": 3,
+                "remainingDays": 12}
+    if path == "/leaves":
+        return {
+            "leaves": [
+                {"leaveId": 31, "leaveType": "ANNUAL", "startDate": "2026-08-11",
+                 "endDate": "2026-08-11", "days": 1, "reason": "개인 사정",
+                 "userId": 5, "userName": "이하늘", "canEdit": True},
+            ],
+            "totalCount": 1, "truncated": False,
+        }
     return {"totalCount": 0, "truncated": False}
 
 
 def _mock_write(path: str, body: bytes) -> Any:
-    """쓰기 mock. 실제로 저장하지 않고 생성된 것처럼 id 만 돌려준다."""
+    """쓰기 mock — 저장 없이 명세와 같은 모양의 응답을 돌려준다. body 를 읽어 에코한다."""
+    data = json.loads(body) if body else {}
+
     if path.endswith("/meetings"):
-        return {"meetingId": 57}
+        return {"meetingId": 57, "documentNo": "MTG-2026-0057", "projectId": 3,
+                "title": data.get("title"), "meetingDate": data.get("meetingDate"),
+                "createdAt": "2026-08-05T10:00:00"}
     if path == "/tasks":
-        return {"taskId": 88}
-    if path == "/leaves":
-        return {"leaveId": 12}
+        items = data.get("tasks", [])
+        return {"createdCount": len(items),
+                "tasks": [{"taskId": 91 + i, **t} for i, t in enumerate(items)]}
+    if "/tasks/" in path and path.endswith("/status"):
+        return {"taskId": int(path.split("/")[2]), "content": "API 명세 정리",
+                "completed": data.get("completed"), "changed": True,
+                "completedAt": "2026-08-05T11:00:00" if data.get("completed") else None}
     if path == "/schedules":
-        return {"scheduleId": 31}
+        n = len(data.get("participantUserIds") or [])
+        return {"scheduleId": 62, "title": data.get("title"), "startAt": data.get("startAt"),
+                "endAt": data.get("endAt"), "participantCount": n + 1}
+    if path.startswith("/schedules/"):
+        return {"scheduleId": int(path.split("/")[2]), "title": data.get("title") or "주간 스크럼",
+                "startAt": data.get("startAt") or "2026-08-06T10:00:00",
+                "endAt": data.get("endAt") or "2026-08-06T10:30:00",
+                "type": data.get("type") or "MEETING", "participantCount": 2}
+    if path == "/leaves":
+        days = 1
+        try:
+            from datetime import date
+            d1 = date.fromisoformat(data["startDate"]); d2 = date.fromisoformat(data["endDate"])
+            days = (d2 - d1).days + 1
+        except Exception:
+            pass
+        return {"leaveId": 32, "scheduleId": 75, "leaveType": data.get("leaveType"),
+                "startDate": data.get("startDate"), "endDate": data.get("endDate"),
+                "days": days, "remainingDaysAfter": 12 - days}
+    if path.startswith("/leaves/"):
+        return {"leaveId": int(path.split("/")[2]), "scheduleId": 74,
+                "leaveType": data.get("leaveType") or "ANNUAL",
+                "startDate": data.get("startDate") or "2026-08-11",
+                "endDate": data.get("endDate") or "2026-08-11",
+                "days": 1, "remainingDaysAfter": 11}
+    if path.endswith("/expenses"):
+        return {"expenseId": 104, "projectId": 3, "expenseDate": data.get("expenseDate"),
+                "amount": data.get("amount"), "spentAmountAfter": 18600000 + (data.get("amount") or 0),
+                "executionRateAfter": 63}
+    if "/milestones/" in path and path.endswith("/status"):
+        return {"milestoneId": int(path.split("/")[4]), "goal": "베타 오픈",
+                "completed": data.get("completed"), "changed": True,
+                "completedAt": "2026-08-05T12:00:00" if data.get("completed") else None,
+                "completionRateAfter": 100 if data.get("completed") else 50}
     return {}
 
 
