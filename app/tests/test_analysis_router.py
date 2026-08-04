@@ -98,28 +98,28 @@ def test_폴백은_확신도를_낮게_준다():
     assert plan.confidence <= 0.3
 
 
-def test_LLM이_죽어도_라우팅은_계속된다(monkeypatch):
+async def test_LLM이_죽어도_라우팅은_계속된다(monkeypatch):
     """키가 없거나 API 가 죽어도 Engine B 는 멈추지 않아야 한다."""
 
-    def boom(*args, **kwargs):
+    async def boom(*args, **kwargs):
         raise RuntimeError("OPENAI_API_KEY 없음")
 
     monkeypatch.setattr(analysis_router.llm_client, "structured_call", boom)
 
-    plan = route(_request("그룹웨어 리뉴얼 위험 알려줘", project_id=1001))
+    plan = await route(_request("그룹웨어 리뉴얼 위험 알려줘", project_id=1001))
 
     assert plan.domains  # 비어 있지 않다
     assert plan.entities.project_ids == [1001]
     assert plan.confidence <= 0.3
 
 
-def test_force_mode는_라우팅_결과를_덮어쓴다(monkeypatch):
+async def test_force_mode는_라우팅_결과를_덮어쓴다(monkeypatch):
     """담당자 3의 시나리오 재분석은 mode 를 다시 판단할 필요가 없다."""
-    monkeypatch.setattr(
-        analysis_router.llm_client,
-        "structured_call",
-        lambda *a, **k: AnalysisPlan(mode="analysis", domains=["project"]),
-    )
 
-    plan = route(_request("조정안 비교"), force_mode="replan")
+    async def fake(*a, **k):
+        return AnalysisPlan(mode="analysis", domains=["project"])
+
+    monkeypatch.setattr(analysis_router.llm_client, "structured_call", fake)
+
+    plan = await route(_request("조정안 비교"), force_mode="replan")
     assert plan.mode == "replan"

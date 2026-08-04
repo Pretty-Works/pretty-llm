@@ -30,14 +30,14 @@ def _json(payload: Any) -> str:
 # ─── 조회 툴 (워커가 자율 호출) ───────────────────────────────────
 
 @tool
-def get_project_overview(project_id: int = 0, project_name: str = "") -> str:
+async def get_project_overview(project_id: int = 0, project_name: str = "") -> str:
     """프로젝트 기본 정보(상태·시작일·목표일·참여자·진행률)를 조회한다.
 
     project_id 를 모르면 project_name 에 프로젝트명 일부를 넣어도 된다.
     """
     try:
         if project_id:
-            project = backend_client.get(f"/api/v1/projects/{project_id}")
+            project = await backend_client.get(f"/api/v1/projects/{project_id}")
         else:
             raise BackendUnavailable("project_id 없이 백엔드 조회 불가")
     except BackendUnavailable:
@@ -47,8 +47,8 @@ def get_project_overview(project_id: int = 0, project_name: str = "") -> str:
         return _json({"error": "해당 프로젝트를 찾지 못했습니다.", "project_id": project_id, "project_name": project_name})
 
     pid = project["id"]
-    members = _members(pid)
-    todos = _todos(pid)
+    members = await _members(pid)
+    todos = await _todos(pid)
     counted = [t for t in todos if t.get("status") != "CANCELED"]
     done = sum(1 for t in counted if t.get("status") == "DONE")
     return _json(
@@ -64,32 +64,32 @@ def get_project_overview(project_id: int = 0, project_name: str = "") -> str:
 
 
 @tool
-def list_project_tasks(project_id: int, status: str = "", assignee_id: int = 0) -> str:
+async def list_project_tasks(project_id: int, status: str = "", assignee_id: int = 0) -> str:
     """프로젝트의 할 일 목록을 조회한다.
 
     status 는 TODO / IN_PROGRESS / DONE / CANCELED 중 하나(비우면 전체),
     assignee_id 를 주면 특정 담당자 것만 조회한다.
     """
-    todos = _todos(project_id, status=status or None, assignee_id=assignee_id or None)
+    todos = await _todos(project_id, status=status or None, assignee_id=assignee_id or None)
     return _json({"project_id": project_id, "count": len(todos), "tasks": todos})
 
 
 @tool
-def list_project_members(project_id: int) -> str:
+async def list_project_members(project_id: int) -> str:
     """프로젝트 참여자와 각자의 역할(PM/BE/FE/QA/DESIGN/INFRA)을 조회한다."""
-    members = _members(project_id)
+    members = await _members(project_id)
     return _json({"project_id": project_id, "count": len(members), "members": members})
 
 
 @tool
-def find_projects(user_id: int = 0, status: str = "") -> str:
+async def find_projects(user_id: int = 0, status: str = "") -> str:
     """프로젝트 목록을 조회한다. user_id 를 주면 그 사람이 참여 중인 것만 조회한다.
 
     다른 프로젝트와의 인력·일정 충돌을 볼 때 쓴다.
     """
     try:
         params = {k: v for k, v in {"userId": user_id, "status": status}.items() if v}
-        projects = backend_client.get("/api/v1/projects", params=params)
+        projects = await backend_client.get("/api/v1/projects", params=params)
     except BackendUnavailable:
         projects = demo_data.list_projects(user_id=user_id or None, status=status or None)
     return _json({"count": len(projects), "projects": projects})
@@ -97,30 +97,30 @@ def find_projects(user_id: int = 0, status: str = "") -> str:
 
 # ─── 내부 헬퍼 - Context Builder 도 재사용한다 (툴 래핑 없이 직접 호출) ────────
 
-def _members(project_id: int) -> list[dict]:
+async def _members(project_id: int) -> list[dict]:
     try:
-        return backend_client.get(f"/api/v1/projects/{project_id}/members")
+        return await backend_client.get(f"/api/v1/projects/{project_id}/members")
     except BackendUnavailable:
         return demo_data.list_project_members(project_id)
 
 
-def _todos(
+async def _todos(
     project_id: int, status: str | None = None, assignee_id: int | None = None
 ) -> list[dict]:
     try:
         params = {k: v for k, v in {"status": status, "assigneeId": assignee_id}.items() if v}
-        return backend_client.get(f"/api/v1/projects/{project_id}/tasks", params=params)
+        return await backend_client.get(f"/api/v1/projects/{project_id}/tasks", params=params)
     except BackendUnavailable:
         return demo_data.list_todos(
             project_id=project_id, status=status, assignee_id=assignee_id
         )
 
 
-def fetch_project(project_id: int | None, project_name: str | None = None) -> dict | None:
+async def fetch_project(project_id: int | None, project_name: str | None = None) -> dict | None:
     try:
         if not project_id:
             raise BackendUnavailable("project_id 없음")
-        return backend_client.get(f"/api/v1/projects/{project_id}")
+        return await backend_client.get(f"/api/v1/projects/{project_id}")
     except BackendUnavailable:
         return demo_data.get_project(project_id=project_id, name=project_name)
 

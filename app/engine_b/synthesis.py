@@ -33,7 +33,7 @@ _RESULT_CHAR_LIMIT = 2500
 
 # ─── 공개 진입점 ──────────────────────────────────────────────────
 
-def synthesize(
+async def synthesize(
     outputs: list[WorkerOutput],
     plan: AnalysisPlan,
     context: AnalysisContext,
@@ -62,7 +62,7 @@ def synthesize(
     ]
 
     try:
-        result = llm_client.structured_call(
+        result = await llm_client.structured_call(
             messages,
             SynthesisResult,
             profile="reasoning",

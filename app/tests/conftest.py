@@ -47,6 +47,6 @@ def request_p001() -> AnalysisRequest:
 
 
 @pytest.fixture
-def context_p001(project_plan, request_p001):
+async def context_p001(project_plan, request_p001):
     """p001 기준 실제 컨텍스트 (픽스처 데이터로 조립)."""
-    return build_context(project_plan, request_p001)
+    return await build_context(project_plan, request_p001)

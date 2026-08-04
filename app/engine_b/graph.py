@@ -43,8 +43,8 @@ log = get_logger("engine_b.graph")
 
 # ─── 노드 ─────────────────────────────────────────────────────────
 
-def _router_node(state: EngineBState) -> dict[str, Any]:
-    plan = route(state["request"])
+async def _router_node(state: EngineBState) -> dict[str, Any]:
+    plan = await route(state["request"])
     unsupported = registry.unsupported_domains(plan.domains)
     return {
         "plan": plan,
@@ -65,8 +65,8 @@ def _router_node(state: EngineBState) -> dict[str, Any]:
     }
 
 
-def _context_node(state: EngineBState) -> dict[str, Any]:
-    context = build_context(state["plan"], state["request"])
+async def _context_node(state: EngineBState) -> dict[str, Any]:
+    context = await build_context(state["plan"], state["request"])
     return {
         "context": context,
         "trace": [
@@ -123,9 +123,9 @@ def _validator_node(state: EngineBState) -> dict[str, Any]:
     }
 
 
-def _synthesis_node(state: EngineBState) -> dict[str, Any]:
+async def _synthesis_node(state: EngineBState) -> dict[str, Any]:
     context = state["context"]
-    result = synthesize(
+    result = await synthesize(
         state.get("worker_outputs") or [],
         state["plan"],
         context,
@@ -266,13 +266,13 @@ def build_analysis_core():
 
 # ─── 공개 진입점 ──────────────────────────────────────────────────
 
-def run_analysis(request: AnalysisRequest) -> EngineBState:
+async def run_analysis(request: AnalysisRequest) -> EngineBState:
     """질의 1건을 끝까지 돌린다. 상태 전체를 돌려주므로 trace 도 함께 볼 수 있다."""
     graph = build_engine_b_graph()
-    return graph.invoke({"request": request, "worker_outputs": [], "trace": []})
+    return await graph.ainvoke({"request": request, "worker_outputs": [], "trace": []})
 
 
-def analyze_scenario(
+async def analyze_scenario(
     plan: AnalysisPlan,
     context: AnalysisContext,
     scenario: ScenarioSpec | None = None,
@@ -283,7 +283,7 @@ def analyze_scenario(
     그 결과 3개를 Tradeoff Agent 에 넘겨 비교하면 된다.
     """
     graph = build_analysis_core()
-    state = graph.invoke(
+    state = await graph.ainvoke(
         {
             "plan": plan,
             "context": context,

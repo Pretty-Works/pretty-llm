@@ -96,7 +96,7 @@ def get_llm(profile: Profile = "worker", temperature: float | None = None) -> Ba
 
 # ─── 단발 호출 ────────────────────────────────────────────────────
 
-def invoke(
+async def invoke(
     messages: Sequence[BaseMessage],
     *,
     profile: Profile = "worker",
@@ -105,12 +105,12 @@ def invoke(
 ) -> AIMessage:
     """단발 호출 + 토큰 로깅."""
     llm = get_llm(profile, temperature)
-    response = llm.invoke(list(messages))
+    response = await llm.ainvoke(list(messages))
     _log_usage(component, response)
     return response  # type: ignore[return-value]
 
 
-def structured_call(
+async def structured_call(
     messages: Sequence[BaseMessage],
     schema: type[TModel],
     *,
@@ -124,14 +124,14 @@ def structured_call(
     """
     llm = get_llm(profile, temperature)
     structured = llm.with_structured_output(schema)
-    result = structured.invoke(list(messages))
+    result = await structured.ainvoke(list(messages))
     log.debug("[%s] structured_call -> %s", component, schema.__name__)
     return result  # type: ignore[return-value]
 
 
 # ─── Tool 자율호출 루프 ───────────────────────────────────────────
 
-def run_tool_loop(
+async def run_tool_loop(
     messages: Sequence[BaseMessage],
     tools: Sequence[BaseTool],
     *,
@@ -157,7 +157,7 @@ def run_tool_loop(
     used = 0
 
     while used < budget:
-        response: AIMessage = llm.invoke(result.messages)  # type: ignore[assignment]
+        response: AIMessage = await llm.ainvoke(result.messages)  # type: ignore[assignment]
         result.usage.add(response)
         _log_usage(component, response)
         result.messages.append(response)
@@ -180,7 +180,7 @@ def run_tool_loop(
 
             used += 1
             name, args = call["name"], call.get("args") or {}
-            trace = _execute_tool(by_name, name, args)
+            trace = await _execute_tool(by_name, name, args)
             result.traces.append(trace)
             result.messages.append(
                 ToolMessage(content=trace.summary, tool_call_id=call["id"])
@@ -194,14 +194,14 @@ def run_tool_loop(
 
 # ─── 내부 헬퍼 ────────────────────────────────────────────────────
 
-def _execute_tool(
+async def _execute_tool(
     by_name: dict[str, BaseTool], name: str, args: dict[str, Any]
 ) -> ToolCallTrace:
     tool = by_name.get(name)
     if tool is None:
         return ToolCallTrace(name, args, False, f"알 수 없는 도구입니다: {name}")
     try:
-        output = tool.invoke(args)
+        output = await tool.ainvoke(args)
     except Exception as exc:  # 툴 실패로 그래프 전체가 죽지 않게 한다
         log.warning("tool %s 실패: %s", name, exc)
         return ToolCallTrace(name, args, False, f"도구 실행 실패: {exc}")
