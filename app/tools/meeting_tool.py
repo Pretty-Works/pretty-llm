@@ -88,6 +88,14 @@ async def meeting_create(
         approval_token=ctx.approval_token,
         body=body,
     )
+
+    # 저장 결과 화면으로 안내 — done.action 에 실린다 (규격 예시 그대로)
+    ctx.action = {
+        "type": "NAVIGATE",
+        "label": "회의록 보러 가기",
+        "targetScreen": "MEETING_DETAIL",
+        "params": {"projectId": projectId, "meetingId": r["meetingId"]},
+    }
     return f"회의록 '{title}' 을 저장했습니다. (meetingId={r['meetingId']})"
 
 

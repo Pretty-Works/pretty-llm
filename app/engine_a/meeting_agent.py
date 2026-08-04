@@ -20,6 +20,7 @@ from app.common.checkpoint import get_checkpointer
 from app.config import settings
 from app.tools.ask_user import ask_user
 from app.tools.meeting_tool import meeting_create, meeting_list
+from app.tools.navigate import navigate
 from app.tools.project_tool import project_members, project_search
 from app.tools.registry import RunContext
 
@@ -39,6 +40,8 @@ SYSTEM_PROMPT = """당신은 그룹웨어의 회의록 담당 에이전트입니
 - 프로젝트는 이름이 아니라 ID 로 다룹니다. 어느 프로젝트인지 모르면 먼저
   project_search 로 후보를 조회하고, 여럿이면 그 목록을 ask_user 의 보기로 주세요.
 - 참석자도 이름이 아니라 userId 목록입니다. 저장 전에 반드시 변환하세요.
+- 삭제·수정은 직접 할 수 없습니다. meeting_list 로 대상을 특정한 뒤
+  navigate(MEETING_DETAIL) 로 해당 화면에 안내하고, 그렇게 했다고 답하세요.
 - 저장이 끝나면 한두 문장으로 결과를 알려주세요. 장황한 요약은 하지 마세요.
 - 사용자가 말하지 않은 내용을 지어내지 마세요. 이미 대화에 있는 정보는 다시 묻지 마세요."""
 
@@ -49,7 +52,8 @@ def build_meeting_agent(checkpointer):
     model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider)
     return create_agent(
         model,
-        tools=[project_search, project_members, meeting_list, meeting_create, ask_user],
+        tools=[project_search, project_members, meeting_list, meeting_create,
+               ask_user, navigate],
         system_prompt=SYSTEM_PROMPT,
         context_schema=RunContext,
         middleware=[
@@ -62,6 +66,8 @@ def build_meeting_agent(checkpointer):
                     "meeting_list": False,
                     # ask_user 는 스스로 interrupt() 하므로 미들웨어가 안 건드린다
                     "ask_user": False,
+                    # navigate 는 DB 를 안 건드린다 (화면 안내만) — 승인 불필요
+                    "navigate": False,
                 },
                 description_prefix="회의록 저장 요청입니다.",
             )
