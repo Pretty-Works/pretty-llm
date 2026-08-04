@@ -108,45 +108,59 @@ _STEP_TEXT = {
 _approval_seq = itertools.count(1)
 
 
-async def stream_run(agent, goal: str, history: list[dict],
-                     run_id: str, ctx: RunContext) -> AsyncIterator[str]:
+def build_resume_command(kind: str, decision: str | None = None,
+                         reason: str | None = None,
+                         answer: str | None = None) -> Command:
+    """재개 입력을 Command 로 조립한다. kind: approval | question
+
+    형식이 둘인 이유: 미들웨어 interrupt(승인)는 decisions 목록 봉투를
+    기대하지만, ask_user 안의 interrupt()(질문)는 값을 그대로 돌려받는다.
+    """
+    if kind == "question":
+        return Command(resume=answer)
+
+    d: dict = {"type": "approve" if decision == "APPROVED" else "reject"}
+    if d["type"] == "reject" and reason:
+        d["message"] = reason        # 에이전트가 사유를 읽고 대안을 답한다
+    return Command(resume={"decisions": [d]})
+
+
+async def stream_run(agent, goal: str, history: list[dict], run_id: str,
+                     ctx: RunContext, route: str = "engine_a",
+                     domain: str = "meeting") -> AsyncIterator[str]:
     """Run 시작 세그먼트: goal 을 실행하고 이벤트를 흘려보낸다."""
     messages = [
         {"role": "user" if m["role"] == "USER" else "assistant", "content": m["content"]}
         for m in history
     ] + [{"role": "user", "content": goal}]
 
-    async for event in _drive(agent, {"messages": messages}, run_id, ctx):
+    async for event in _drive(agent, {"messages": messages}, run_id, ctx, route, domain):
         yield event
 
 
-async def stream_resume(agent, decision: str, run_id: str, ctx: RunContext,
-                        reason: str | None = None) -> AsyncIterator[str]:
-    """재개 세그먼트: 멈춘 지점부터 다시 실행. decision: APPROVED | REJECTED."""
-    d: dict = {"type": "approve" if decision == "APPROVED" else "reject"}
-    if d["type"] == "reject" and reason:
-        d["message"] = reason        # 에이전트가 사유를 읽고 대안을 답한다
-
-    command = Command(resume={"decisions": [d]})
-    async for event in _drive(agent, command, run_id, ctx):
+async def stream_command(agent, command: Command, run_id: str, ctx: RunContext,
+                         route: str = "engine_a",
+                         domain: str = "meeting") -> AsyncIterator[str]:
+    """재개 세그먼트: build_resume_command 로 만든 입력으로 멈춘 지점부터 실행."""
+    async for event in _drive(agent, command, run_id, ctx, route, domain):
         yield event
 
 
-async def stream_answer(agent, answer: str, run_id: str,
-                        ctx: RunContext) -> AsyncIterator[str]:
-    """question 에 대한 답으로 재개. resume 값이 ask_user 의 interrupt() 반환값이 된다.
+async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
+                 route: str = "engine_a", domain: str = "meeting",
+                 emit_done: bool = True,
+                 result_sink: dict | None = None) -> AsyncIterator[str]:
+    """세그먼트의 공통 몸통. 에이전트를 astream 으로 돌리며 이벤트로 변환한다.
 
-    승인 재개(decisions 봉투)와 형식이 다른 이유: 미들웨어 interrupt 는
-    decisions 목록을 기대하지만, 도구 안의 interrupt() 는 값을 그대로 돌려받는다.
+    route·domain 을 config metadata 에 실어 체크포인트에 함께 저장한다 —
+    /resume 은 goal 이 없어 재분류가 불가능하므로, 어느 에이전트로 돌아갈지를
+    체크포인트가 기억해야 한다.
+
+    emit_done=False · result_sink: 복합 실행기(composite)용 — 중간 작업의
+    완료는 done 이벤트가 아니라 sink 로 알리고, done 은 마지막에 한 번만.
     """
-    command = Command(resume=answer)
-    async for event in _drive(agent, command, run_id, ctx):
-        yield event
-
-
-async def _drive(agent, agent_input, run_id: str, ctx: RunContext) -> AsyncIterator[str]:
-    """두 세그먼트의 공통 몸통. 에이전트를 astream 으로 돌리며 이벤트로 변환한다."""
-    config = {"configurable": {"thread_id": run_id}}
+    config = {"configurable": {"thread_id": run_id},
+              "metadata": {"route": route, "domain": domain}}
     tool_call_ids: dict[str, str] = {}      # 도구 이름 → tool_call id (interrupt 대조용)
     seen_calls: set[str] = set()            # 미들웨어가 같은 메시지를 재방출하므로 중복 제거
     final_text = ""
@@ -180,8 +194,15 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext) -> AsyncItera
                 if getattr(msg, "type", "") == "ai" and not getattr(msg, "tool_calls", None):
                     final_text = msg.text if isinstance(msg.text, str) else msg.content
 
-    # ④ 완주 — done 은 마지막 1회. action(NAVIGATE 등)은 다음 단계에서 붙인다.
-    yield sse.sse_event("done", {"answer": final_text, "action": None})
+    # ④ 완주 — 단독 실행이면 done 을 내보내고, 복합 실행의 중간 작업이면
+    #    sink 로 결과만 전달한다 (done 은 복합 실행기가 마지막에 한 번).
+    #    action 은 도구가 RunContext 에 기록해 둔 것 (meeting_create·navigate·fill_form).
+    if result_sink is not None:
+        result_sink["answer"] = final_text
+        result_sink["action"] = ctx.action
+        result_sink["completed"] = True
+    if emit_done:
+        yield sse.sse_event("done", {"answer": final_text, "action": ctx.action})
 
 
 def _approval_payload(interrupts, tool_call_ids: dict[str, str]) -> dict:

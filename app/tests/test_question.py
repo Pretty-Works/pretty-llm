@@ -52,14 +52,20 @@ async def _scenarios() -> None:
                                  timeout=90) as client:
 
         # ── ① 모호한 goal → question ─────────────────────────
-        run_id = f"run_{uuid.uuid4().hex[:8]}"
-        events = await _collect_sse(client, "POST", "/api/agent/runs", {
-            "runId": run_id, "conversationId": 12, "goal": "회의록 올려줘",
-            "messages": [], "screenContext": {"screen": "HOME", "formState": {}},
-            "requestSource": "WEB", "locale": "ko-KR",
-        })
-        names = [n for n, _ in events]
-        assert names[-1] == "question", f"question 으로 안 끝남: {names}"
+        # 모델이 ask_user 대신 텍스트(done)로 물을 때도 있다 — 그건 A-2 로
+        # 합법이지만, 이 테스트의 목적은 question "이벤트 기계" 검증이므로
+        # question 이 나올 때까지 새 Run 을 최대 3번 시도한다.
+        for attempt in range(3):
+            run_id = f"run_{uuid.uuid4().hex[:8]}"
+            events = await _collect_sse(client, "POST", "/api/agent/runs", {
+                "runId": run_id, "conversationId": 12, "goal": "회의록 올려줘",
+                "messages": [], "screenContext": {"screen": "HOME", "formState": {}},
+                "requestSource": "WEB", "locale": "ko-KR",
+            })
+            names = [n for n, _ in events]
+            if names[-1] == "question":
+                break
+        assert names[-1] == "question", f"3회 모두 question 없이 종료: {names}"
         q = events[-1][1]
         for field in ("questionId", "label", "text", "options", "multiple", "allowFreeText"):
             assert field in q, f"question 에 {field} 없음: {q}"
