@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.prompts import cost as prompt
 from app.tools.budget_tool import BUDGET_TOOLS
-from app.tools.project_tool import get_project_overview
+from app.tools.project_query import get_project_overview
 from app.workers.base import WorkerSpec
 
 

@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.prompts import priority as prompt
-from app.tools.project_tool import PROJECT_TOOLS
+from app.tools.project_query import PROJECT_TOOLS
 from app.workers.base import WorkerSpec
 
 
