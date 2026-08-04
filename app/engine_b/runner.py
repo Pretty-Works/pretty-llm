@@ -1,42 +1,39 @@
+# app/engine_b/runner.py
+"""Engine B 실행기 — 그래프를 돌리며 노드가 끝날 때마다 SSE 한 줄을 흘린다.
+
+    async for chunk in run_engine_b(request):
+        yield chunk
+
+이벤트 형태:
+    data: {"step": "analysis_router", "status": "done"}
+    data: {"step": "synthesis", "status": "done", "result": {...}}
+    data: {"step": "done"}
 """
-Engine B Runner — LangGraph 그래프 실행 + SSE 스트리밍
-
-외부(api/)에서 이렇게 호출:
-    async for chunk in run_engine_b(state):
-        yield chunk   # SSE data
-
-담당자3 작성.
-"""
-
-from __future__ import annotations
 
 import json
+from functools import lru_cache
 from typing import AsyncIterator
 
 from app.engine_b.graph import build_engine_b_graph
-from app.schemas.state import EngineBState
-
-_graph = build_engine_b_graph()
+from app.schemas.state import AnalysisRequest
 
 
-async def run_engine_b(state: EngineBState) -> AsyncIterator[str]:
-    """
-    Engine B 실행. 각 노드 완료 시 SSE 이벤트 yield.
+@lru_cache(maxsize=1)
+def _graph():
+    return build_engine_b_graph()
 
-        data: {"step": "analysis_router", "status": "done"}
-        data: {"step": "meeting_workers", "status": "done"}
-        data: {"step": "validator", "status": "done"}
-        data: {"step": "synthesis", "status": "done", "result": {...}}
-        data: {"step": "done"}
-    """
-    async for event in _graph.astream(state):
-        node_name = next(iter(event))
-        updated: EngineBState = event[node_name]
 
-        if node_name == "synthesis":
-            yield _sse({"step": node_name, "status": "done", "result": updated.synthesis})
+async def run_engine_b(request: AnalysisRequest) -> AsyncIterator[str]:
+    """질의 1건을 끝까지 돌린다."""
+    initial = {"request": request, "worker_outputs": [], "trace": []}
+
+    async for event in _graph().astream(initial):
+        node, update = next(iter(event.items()))
+        if node == "synthesis":
+            result = update["result"].model_dump(mode="json")
+            yield _sse({"step": node, "status": "done", "result": result})
         else:
-            yield _sse({"step": node_name, "status": "done"})
+            yield _sse({"step": node, "status": "done"})
 
     yield _sse({"step": "done"})
 

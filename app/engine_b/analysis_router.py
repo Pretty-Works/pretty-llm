@@ -15,7 +15,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.common import llm_client
 from app.config import get_settings
 from app.prompts import analysis_router as prompts
-from app.schemas.state import AnalysisPlan, AnalysisRequest, Domain, Mode
+from app.schemas.state import AnalysisPlan, AnalysisRequest, Domain, Mode, UIContext
 from app.utils.logger import get_logger
 from app.utils.parser import truncate
 
@@ -150,15 +150,35 @@ def _fallback_plan(request: AnalysisRequest) -> AnalysisPlan:
 
 
 # ─── Orchestrator 호환 진입점 ─────────────────────────────────────
-#     담당자 1의 walking skeleton 이 쓰던 형태. 아직 mock 어댑터를 거친다.
-#     그래프가 올라오면(다음 PR) 여기서 run_analysis() 를 부르도록 바꾼다.
 
 def run(domain: Domain, req) -> dict:
-    """도메인 분석을 실행하고 결과를 모아 반환한다."""
-    from app.engine_a import engine_b_client
+    """AgentRequest 를 받아 그래프를 끝까지 돌린다. 담당자 1의 orchestrator 가 부른다.
 
-    worker_outputs = engine_b_client.analyze(domain, req)
+    domain 은 orchestrator 의 힌트일 뿐이고, 실제 도메인은 라우터가 다시 정한다.
+    """
+    from app.engine_b.graph import run_analysis
+
+    state = run_analysis(to_analysis_request(req))
+    result = state.get("result")
     return {
         "domain": domain.value,
-        "worker_outputs": [w.model_dump() for w in worker_outputs],
+        "result": result.model_dump(mode="json") if result else None,
     }
+
+
+def to_analysis_request(req) -> AnalysisRequest:
+    """연동 규격 §3 의 AgentRequest -> Engine B 입력."""
+    screen = getattr(req, "screenContext", None)
+    form = getattr(screen, "formState", None) or {}
+    return AnalysisRequest(
+        query=req.goal,
+        user_id=req.userId,
+        chat_history=[
+            {"role": m.role, "content": m.content} for m in (req.messages or [])
+        ],
+        ui_context=UIContext(
+            screen=getattr(screen, "screen", None),
+            project_id=form.get("projectId") or form.get("project_id"),
+            task_id=form.get("taskId") or form.get("task_id"),
+        ),
+    )
