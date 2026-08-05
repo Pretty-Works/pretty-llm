@@ -3,14 +3,15 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.prompts import priority as prompt
+from app.schemas.lenient import LenientModel
 from app.tools.project_query import PROJECT_TOOLS
 from app.workers.base import WorkerSpec
 
 
-class PriorityItem(BaseModel):
+class PriorityItem(LenientModel):
     task_id: str = Field(description="할 일 id. 컨텍스트에 있는 값을 그대로 쓴다.")
     title: str = ""
     tier: Literal["P0", "P1", "P2", "P3"] = "P2"
@@ -23,7 +24,7 @@ class PriorityItem(BaseModel):
     rationale: str = Field(default="", description="이 순위인 이유 1~2문장")
 
 
-class PriorityResult(BaseModel):
+class PriorityResult(LenientModel):
     ranked: list[PriorityItem] = Field(
         default_factory=list, description="열려 있는 할 일 전체를 우선순위 순으로"
     )

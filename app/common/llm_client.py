@@ -57,6 +57,18 @@ class LLMUsage:
         self.calls += 1
 
 
+# 프로세스 전체 누적. 비용 비교나 요청 단위 계측에 쓴다.
+_total = LLMUsage()
+
+
+def usage_snapshot() -> LLMUsage:
+    return LLMUsage(_total.input_tokens, _total.output_tokens, _total.calls)
+
+
+def reset_usage() -> None:
+    _total.input_tokens = _total.output_tokens = _total.calls = 0
+
+
 @dataclass
 class ToolLoopResult:
     messages: list[BaseMessage] = field(default_factory=list)
@@ -117,16 +129,30 @@ async def structured_call(
     profile: Profile = "worker",
     component: str = "unknown",
     temperature: float | None = None,
+    method: str = "json_schema",
 ) -> TModel:
     """Pydantic 스키마로 출력 형태를 강제한다.
 
     파싱 실패를 애플리케이션 코드에서 다루지 않아도 되도록 구조화 출력만 쓴다.
+
+    기본은 엄격 모드(json_schema)다. 중첩 스키마에서 모델이 필드를 헷갈리지 않는다.
+    다만 `dict[str, Any]` 같은 자유형 필드가 있으면 엄격 모드가 거부하므로
+    (SynthesisResult.proposed_changes) 그런 호출만 method="function_calling" 을 준다.
+
+    include_raw 는 토큰 사용량을 남기기 위한 것 — 파싱된 객체만 받으면 계측이 안 된다.
     """
     llm = get_llm(profile, temperature)
-    structured = llm.with_structured_output(schema)
-    result = await structured.ainvoke(list(messages))
+    structured = llm.with_structured_output(schema, method=method, include_raw=True)
+    payload = await structured.ainvoke(list(messages))
+
+    raw, parsed = payload.get("raw"), payload.get("parsed")
+    if raw is not None:
+        _log_usage(component, raw)
+    if parsed is None:
+        raise ValueError(f"구조화 출력 파싱 실패: {payload.get('parsing_error')}")
+
     log.debug("[%s] structured_call -> %s", component, schema.__name__)
-    return result  # type: ignore[return-value]
+    return parsed  # type: ignore[return-value]
 
 
 # ─── Tool 자율호출 루프 ───────────────────────────────────────────
@@ -209,6 +235,7 @@ async def _execute_tool(
 
 
 def _log_usage(component: str, message: BaseMessage) -> None:
+    _total.add(message)
     usage = getattr(message, "usage_metadata", None)
     if usage:
         log.info(
