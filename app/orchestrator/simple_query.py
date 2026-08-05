@@ -17,24 +17,37 @@ from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 
 from app.config import settings
-from app.tools.meeting_tool import meeting_list
+from app.tools.expense_tool import budget_summary, expense_list
+from app.tools.leave_tool import leave_balance, leave_list
+from app.tools.meeting_tool import meeting_detail, meeting_list
+from app.tools.milestone_tool import milestone_list
 from app.tools.project_tool import project_members, project_search
 from app.tools.registry import RunContext
+from app.tools.schedule_tool import schedule_list
+from app.tools.task_tool import task_list
+from app.tools.user_tool import user_me, user_search
 
 SYSTEM_PROMPT = """당신은 그룹웨어의 조회 담당 에이전트입니다. 묻는 것에만 간결히 답합니다.
 
 원칙:
+- "어제"·"이번 주" 같은 상대 날짜가 나오면 user_me 를 먼저 불러 오늘을 확인하세요.
 - 프로젝트를 이름으로 말하면 project_search 로 ID 를 찾은 뒤 조회하세요.
 - 조회 결과에 없는 내용을 지어내지 마세요. 없으면 없다고 답하세요.
+- 남의 휴가 사유 같은 가려진 값(null)은 답변에 싣지 마세요.
 - 답은 2~3문장 이내. 목록은 항목당 한 줄로.
 - 무엇을 조회할지 애매하면 짧게 되물어보세요 (이 답변 자체가 질문이어도 됩니다)."""
+
+# 조회 13종 전부 — 쓰기 도구가 하나도 없으므로 승인 게이트 자체가 불필요
+READ_TOOLS = [user_me, user_search, project_search, project_members, milestone_list,
+              task_list, meeting_list, meeting_detail, budget_summary, expense_list,
+              schedule_list, leave_balance, leave_list]
 
 
 def build_simple_agent():
     model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider)
     return create_agent(
         model,
-        tools=[project_search, project_members, meeting_list],   # 조회만
+        tools=READ_TOOLS,
         system_prompt=SYSTEM_PROMPT,
         context_schema=RunContext,
         # 미들웨어·checkpointer 없음 — 위 모듈 주석 참고

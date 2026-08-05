@@ -1,9 +1,8 @@
 """
-도구 층 스모크 테스트 (mock 백엔드)
+도구 층 스모크 테스트 — 카탈로그 22종 전수 (mock 백엔드)
 
-가장 중요한 검증은 마지막 하나다 — **승인 시점과 실행 시점의 요청 바디가
-바이트 단위로 같은가.** 다르면 백엔드가 AGENT_015 로 거부하며, 명세가
-"붙이는 동안 가장 자주 나는 에러"라고 경고한 지점이다.
+가장 중요한 검증은 여전히 하나다 — **승인 시점과 실행 시점의 요청 바디가
+바이트 단위로 같은가** (다르면 AGENT_015).
 
 실행:  uv run python -m app.tests.test_tools
 """
@@ -15,132 +14,164 @@ import asyncio
 from langchain.tools import ToolRuntime
 
 from app.clients.backend import canonical_json
-from app.tools.meeting_tool import meeting_create, meeting_list
+from app.tools.ask_user import ask_user
+from app.tools.expense_tool import budget_summary, expense_create, expense_list
+from app.tools.leave_tool import leave_balance, leave_create, leave_list, leave_update
+from app.tools.meeting_tool import meeting_create, meeting_detail, meeting_list
+from app.tools.milestone_tool import milestone_list, milestone_toggle_status
+from app.tools.navigate import fill_form, navigate
 from app.tools.project_tool import project_members, project_search
-from app.tools.registry import RunContext, build_request, catalog_name, is_write
+from app.tools.registry import (WRITE_TOOLS, RunContext, build_request,
+                                catalog_name, is_write)
+from app.tools.schedule_tool import schedule_create, schedule_list, schedule_update
+from app.tools.task_tool import task_create, task_list, task_toggle_status
+from app.tools.user_tool import user_me, user_search
 
-ALL_TOOLS = [project_search, project_members, meeting_list, meeting_create]
+READ = [user_me, user_search, project_search, project_members, milestone_list,
+        task_list, meeting_list, meeting_detail, budget_summary, expense_list,
+        schedule_list, leave_balance, leave_list]
+WRITE = [meeting_create, task_create, task_toggle_status, schedule_create,
+         schedule_update, leave_create, leave_update, expense_create,
+         milestone_toggle_status]
+ETC = [ask_user, navigate, fill_form]
 
-# LLM 이 만들어낼 법한 인자. followUp 은 선택 항목이지만 null 을 명시한다
-# (규격: "null 필드는 포함한다 — 생략과 명시적 null 을 구분")
 MEETING_ARGS = {
-    "projectId": 3,
-    "title": "스프린트 리뷰",
-    "meetingDate": "2026-08-05",
-    "attendeeIds": [2, 5, 7],
-    "purpose": "진행 상황 공유",
-    "content": "백엔드 API 68% 완료",
-    "followUp": None,
+    "projectId": 3, "title": "스프린트 리뷰", "meetingDate": "2026-08-05",
+    "location": None, "attendeeIds": [2, 7], "purpose": "진행 상황 공유",
+    "content": "백엔드 API 68% 완료", "followUp": None, "recording": None,
 }
 
 
 def _runtime(ctx: RunContext) -> ToolRuntime:
-    """에이전트 없이 도구만 부르기 위한 최소 런타임."""
-    return ToolRuntime(
-        state={}, context=ctx, config={}, stream_writer=lambda _: None,
-        tool_call_id="tc_test", store=None,
-    )
+    return ToolRuntime(state={}, context=ctx, config={},
+                       stream_writer=lambda _: None, tool_call_id="tc_test", store=None)
 
 
-def test_runtime_is_hidden_from_llm() -> None:
-    """runtime 은 주입값이므로 LLM 에 노출되면 안 된다."""
-    for t in ALL_TOOLS:
+def test_runtime_hidden() -> None:
+    """runtime 은 주입값 — 어느 도구에서도 LLM 스키마에 노출되면 안 된다."""
+    for t in READ + WRITE + ETC:
         props = t.tool_call_schema.model_json_schema().get("properties", {})
-        assert "runtime" not in props, f"{t.name} 스키마에 runtime 이 노출됨"
+        assert "runtime" not in props, f"{t.name} 스키마에 runtime 노출"
 
 
-def test_write_tool_args_all_required() -> None:
-    """쓰기 도구는 선택 인자를 두지 않는다.
-
-    LLM 이 생략하면 tool_call.args 에서 키가 빠지는데 도구 안에서는 기본값이
-    채워져, 승인 params 와 실행 params 가 달라진다.
-    """
-    schema = meeting_create.tool_call_schema.model_json_schema()
-    assert set(schema["required"]) == set(schema["properties"]), "선택 인자가 있음"
+def test_write_args_all_required() -> None:
+    """쓰기 도구 9종 전부 — 선택 인자 금지 (생략되면 승인/실행 params 가 어긋난다)."""
+    for t in WRITE:
+        schema = t.tool_call_schema.model_json_schema()
+        assert set(schema["required"]) == set(schema["properties"]), \
+            f"{t.name} 에 선택 인자가 있음"
 
 
-def test_catalog_name_mapping() -> None:
-    """OpenAI 함수명에는 점을 못 쓰므로 LangChain 이름과 카탈로그 이름을 나눈다."""
-    assert is_write("meeting_create")
+def test_catalog_coverage() -> None:
+    """registry 의 쓰기 명세 9종과 도구가 1:1 인가 + 이름 매핑 확인."""
+    assert len(WRITE_TOOLS) == 9, f"registry 쓰기 명세 {len(WRITE_TOOLS)}개 (기대 9)"
+    tool_names = {t.name for t in WRITE}
+    assert tool_names == set(WRITE_TOOLS), f"불일치: {tool_names ^ set(WRITE_TOOLS)}"
     assert catalog_name("meeting_create") == "meeting.create"
-    assert not is_write("project_search")
+    assert catalog_name("milestone_toggle_status") == "milestone.toggleStatus"
+    assert is_write("leave_update") and not is_write("leave_balance")
 
 
-async def test_read_tools_call_backend() -> None:
+async def test_read_tools() -> None:
+    """조회 13종 전부 mock 관통 — 응답 파싱이 명세 형태와 맞는지 확인."""
     rt = _runtime(RunContext(run_id="run_test"))
+    checks = [
+        (user_me, {}, "오늘: 2026-08-05"),
+        (user_search, {"keyword": "김서준"}, "[2] 김서준"),
+        (project_search, {"keyword": "그룹웨어"}, "[3] 그룹웨어 AI 고도화"),
+        (project_members, {"projectId": 3}, "★본인"),
+        (milestone_list, {"projectId": 3}, "베타 오픈"),
+        (task_list, {"projectId": None, "weekOffset": 0}, "이월"),
+        (meeting_list, {"projectId": 3}, "[41]"),
+        (meeting_detail, {"projectId": 3, "meetingId": 41}, "후속 조치"),
+        (budget_summary, {"projectId": 3}, "집행률 62%"),
+        (expense_list, {"projectId": 3, "sort": "AMOUNT_DESC"}, "젯브레인"),
+        (schedule_list, {"fromDate": "2026-08-03", "toDate": "2026-08-16"}, "휴가"),
+        (leave_balance, {}, "잔여 12일"),
+        (leave_list, {"fromDate": "2026-08-01", "toDate": "2026-08-31"}, "[31]"),
+    ]
+    for t, args, expect in checks:
+        out = await t.coroutine(**args, runtime=rt)
+        assert expect in out, f"{t.name}: {expect!r} 없음 → {out[:120]!r}"
 
-    out = await project_search.coroutine(keyword="그룹웨어", runtime=rt)
-    assert "[3]" in out and "그룹웨어 AI 고도화" in out, out
 
-    out = await project_members.coroutine(projectId=3, runtime=rt)
-    assert "[5] 이하늘" in out, out
-
-    out = await meeting_list.coroutine(projectId=3, runtime=rt)
-    assert "[41]" in out, out
-
-
-async def test_params_bytes_identical(monkeypatched: dict) -> None:
-    """★ 핵심 — 승인 시점 바이트 == 실행 시점 바이트.
-
-    승인 경로: SSE 계층이 tool_call.args 를 build_request 로 변환해 방출
-    실행 경로: 도구가 자기 인자를 build_request 로 변환해 전송
-    둘이 같은 함수를 쓰므로 결과가 같아야 한다.
-    """
-    # 승인 경로 — SSE 계층이 만들 바이트
+async def test_params_bytes_identical(captured: dict) -> None:
+    """★ 핵심 — 승인 시점 바이트 == 실행 시점 바이트 (모든 쓰기 도구의 공통 구조)."""
     _, path, params = build_request("meeting_create", MEETING_ARGS)
     approval_bytes = canonical_json(params)
     assert path == "/projects/3/meetings", path
 
-    # 실행 경로 — 도구가 실제로 보낸 바이트를 가로채 비교
     rt = _runtime(RunContext(run_id="run_test", approval_token="apv_test"))
     out = await meeting_create.coroutine(**MEETING_ARGS, runtime=rt)
 
-    sent = monkeypatched["body"]
-    assert sent == approval_bytes, (
-        f"바이트 불일치 → AGENT_015\n  승인: {approval_bytes!r}\n  실행: {sent!r}"
-    )
-    assert monkeypatched["approval_token"] == "apv_test", "승인 토큰이 안 실림"
+    assert captured["body"] == approval_bytes, "바이트 불일치 → AGENT_015"
+    assert captured["approval_token"] == "apv_test"
     assert "meetingId=57" in out, out
 
 
-async def test_params_canonical_takes_priority(monkeypatched: dict) -> None:
-    """BE 가 paramsCanonical 을 주면 우리가 만든 것 대신 그 바이트를 그대로 쓴다."""
+async def test_write_smoke(captured: dict) -> None:
+    """쓰기 8종(회의록 제외) mock 관통 — 경로·응답 파싱 확인."""
+    rt = _runtime(RunContext(run_id="run_test", approval_token="apv_test"))
+    cases = [
+        (task_create, {"tasks": [{"content": "명세 정리", "dueDate": "2026-08-07",
+                                  "projectId": 3}]}, "/tasks", "1건"),
+        (task_toggle_status, {"taskId": 58, "completed": True}, "/tasks/58/status", "완료"),
+        (schedule_create, {"title": "팀미팅", "startAt": "2026-08-11T14:00:00",
+                           "endAt": "2026-08-11T15:00:00", "type": "MEETING",
+                           "allDay": False, "participantUserIds": [2]}, "/schedules", "scheduleId=62"),
+        (schedule_update, {"scheduleId": 61, "title": None, "startAt": "2026-08-06T15:00:00",
+                           "endAt": "2026-08-06T15:30:00", "type": None, "allDay": None,
+                           "participantUserIds": None}, "/schedules/61", "수정"),
+        (leave_create, {"leaveType": "ANNUAL", "startDate": "2026-08-11",
+                        "endDate": "2026-08-12", "reason": None}, "/leaves", "잔여 10일"),
+        (leave_update, {"leaveId": 31, "leaveType": None, "startDate": None,
+                        "endDate": None, "reason": ""}, "/leaves/31", "수정"),
+        (expense_create, {"projectId": 3, "expenseDate": "2026-08-01", "category": "MEAL",
+                          "merchant": "한경식당", "purpose": "회식", "amount": 120000},
+         "/projects/3/expenses", "120,000원"),
+        (milestone_toggle_status, {"projectId": 3, "milestoneId": 12, "completed": True},
+         "/projects/3/milestones/12/status", "100%"),
+    ]
+    for t, args, want_path, expect in cases:
+        out = await t.coroutine(**args, runtime=rt)
+        assert captured["path"] == want_path, f"{t.name}: 경로 {captured['path']}"
+        assert expect in out, f"{t.name}: {expect!r} 없음 → {out[:120]!r}"
+
+
+async def test_params_canonical_priority(captured: dict) -> None:
     given = b'{"from":"backend"}'
-    rt = _runtime(RunContext(
-        run_id="run_test", approval_token="apv_test", params_canonical=given,
-    ))
+    rt = _runtime(RunContext(run_id="run_test", approval_token="apv_test",
+                             params_canonical=given))
     await meeting_create.coroutine(**MEETING_ARGS, runtime=rt)
-    assert monkeypatched["body"] == given, "paramsCanonical 이 무시됨"
+    assert captured["body"] == given, "paramsCanonical 이 무시됨"
 
 
 async def main() -> None:
     from app.clients import backend as backend_mod
 
-    # 도구가 실제로 보낸 바이트를 잡아두기 위해 write 를 감싼다
     captured: dict = {}
     original = backend_mod.backend.write
 
     async def spy(method, path, run_id, approval_token, body):
-        captured.update(
-            method=method, path=path, run_id=run_id,
-            approval_token=approval_token, body=body,
-        )
+        captured.update(method=method, path=path, run_id=run_id,
+                        approval_token=approval_token, body=body)
         return await original(method, path, run_id=run_id,
                               approval_token=approval_token, body=body)
 
     backend_mod.backend.write = spy  # type: ignore[method-assign]
 
-    test_runtime_is_hidden_from_llm();      print("✅ runtime 이 LLM 스키마에서 제외됨")
-    test_write_tool_args_all_required();    print("✅ 쓰기 도구 인자가 전부 required")
-    test_catalog_name_mapping();            print("✅ 카탈로그 이름 매핑")
-    await test_read_tools_call_backend();   print("✅ 조회 도구 3개 호출")
+    test_runtime_hidden();           print(f"✅ runtime 숨김 ({len(READ + WRITE + ETC)}종)")
+    test_write_args_all_required();  print("✅ 쓰기 9종 인자 전부 required")
+    test_catalog_coverage();         print("✅ registry 9종 ↔ 도구 1:1 + 이름 매핑")
+    await test_read_tools();         print("✅ 조회 13종 mock 관통")
     await test_params_bytes_identical(captured)
     print("✅ 승인 바이트 == 실행 바이트")
-    print(f"   {captured['body'].decode()}")
-    await test_params_canonical_takes_priority(captured)
+    await test_write_smoke(captured)
+    print("✅ 쓰기 8종 mock 관통 (경로·응답)")
+    await test_params_canonical_priority(captured)
     print("✅ paramsCanonical 우선 적용")
 
-    print("\n전부 통과")
+    print("\n전부 통과 — 도구 22종 + ask_user·navigate·fill_form")
 
 
 if __name__ == "__main__":

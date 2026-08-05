@@ -86,7 +86,48 @@ WRITE_TOOLS: dict[str, dict] = {
         "path": "/leaves",
         "path_params": (),
     },
-    # 추가 예정: task_create · schedule_create · expense_create ... (수요일 D)
+    "leave_update": {
+        "catalog": "leave.update",
+        "method": "PATCH",
+        "path": "/leaves/{leaveId}",
+        "path_params": ("leaveId",),
+    },
+    "task_create": {
+        "catalog": "task.create",           # 배치 — body {"tasks":[...]} 1~10건 단일 트랜잭션
+        "method": "POST",
+        "path": "/tasks",
+        "path_params": (),
+    },
+    "task_toggle_status": {
+        "catalog": "task.toggleStatus",
+        "method": "PATCH",
+        "path": "/tasks/{taskId}/status",
+        "path_params": ("taskId",),
+    },
+    "schedule_create": {
+        "catalog": "schedule.create",
+        "method": "POST",
+        "path": "/schedules",
+        "path_params": (),
+    },
+    "schedule_update": {
+        "catalog": "schedule.update",
+        "method": "PATCH",
+        "path": "/schedules/{scheduleId}",
+        "path_params": ("scheduleId",),
+    },
+    "expense_create": {
+        "catalog": "expense.create",
+        "method": "POST",
+        "path": "/projects/{projectId}/expenses",
+        "path_params": ("projectId",),
+    },
+    "milestone_toggle_status": {
+        "catalog": "milestone.toggleStatus",
+        "method": "PATCH",
+        "path": "/projects/{projectId}/milestones/{milestoneId}/status",
+        "path_params": ("projectId", "milestoneId"),
+    },
 }
 
 
