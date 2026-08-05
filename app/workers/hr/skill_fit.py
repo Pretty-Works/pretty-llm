@@ -7,9 +7,10 @@ ERD 에 스킬 컬럼이 없어 적합도는 '조회'가 아니라 '추론'이�
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.prompts import skill_fit as prompt
+from app.schemas.lenient import LenientModel
 from app.tools.hr_tool import (
     find_user,
     get_user_project_history,
@@ -20,7 +21,7 @@ from app.tools.project_query import list_project_members, list_project_tasks
 from app.workers.base import WorkerSpec
 
 
-class Candidate(BaseModel):
+class Candidate(LenientModel):
     user_id: int = 0
     name: str = ""
     fit_score: int = Field(default=50, description="0~100")
@@ -34,7 +35,7 @@ class Candidate(BaseModel):
     note: str = Field(default="", description="승인된 휴가 등 참고사항")
 
 
-class Assignment(BaseModel):
+class Assignment(LenientModel):
     target: str = Field(default="", description="'todo:101' 또는 'project:1003'")
     target_kind: Literal["task", "project", "role"] = "task"
     work_type: str = Field(
@@ -47,7 +48,7 @@ class Assignment(BaseModel):
     rationale: str = ""
 
 
-class SkillFitResult(BaseModel):
+class SkillFitResult(LenientModel):
     assignments: list[Assignment] = Field(default_factory=list)
     inference_basis: str = Field(
         default="",

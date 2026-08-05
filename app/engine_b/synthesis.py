@@ -67,6 +67,9 @@ async def synthesize(
             SynthesisResult,
             profile="reasoning",
             component="engine_b.synthesis",
+            # proposed_changes 의 before/after 가 자유형 dict 라 엄격 모드가 스키마를 거부한다.
+            # 그대로 두면 통합이 매번 실패해 _degraded_result 로 떨어진다.
+            method="function_calling",
         )
     except Exception as exc:
         log.error("통합 실패: %s", exc)

@@ -3,9 +3,10 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.prompts import risk as prompt
+from app.schemas.lenient import LenientModel
 from app.tools.budget_tool import get_project_budget
 from app.tools.hr_tool import list_user_leaves
 from app.tools.project_query import PROJECT_TOOLS
@@ -14,7 +15,7 @@ from app.workers.base import WorkerSpec
 RiskCategory = Literal["schedule", "resource", "scope", "quality", "cost", "external"]
 
 
-class RiskItem(BaseModel):
+class RiskItem(LenientModel):
     category: RiskCategory = "schedule"
     title: str = Field(default="", description="위험을 한 줄로")
     subject: str = Field(
@@ -29,7 +30,7 @@ class RiskItem(BaseModel):
     mitigation: str = Field(default="", description="실행 가능한 완화책")
 
 
-class RiskResult(BaseModel):
+class RiskResult(LenientModel):
     overall_risk_score: int = Field(
         default=0, description="0~100. 개별 위험의 평균이 아니라 종합 판단"
     )

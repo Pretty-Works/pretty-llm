@@ -7,9 +7,10 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.prompts import workload as prompt
+from app.schemas.lenient import LenientModel
 from app.tools.hr_tool import find_user, get_user_workload, list_user_leaves
 from app.tools.project_query import list_project_tasks
 from app.workers.base import WorkerSpec
@@ -17,7 +18,7 @@ from app.workers.base import WorkerSpec
 LoadStatus = Literal["OVERLOADED", "TIGHT", "BALANCED", "AVAILABLE"]
 
 
-class MemberLoad(BaseModel):
+class MemberLoad(LenientModel):
     user_id: int = 0
     name: str = ""
     status: LoadStatus = "BALANCED"
@@ -32,7 +33,7 @@ class MemberLoad(BaseModel):
     note: str = Field(default="", description="이 상태로 판단한 이유")
 
 
-class RebalanceHint(BaseModel):
+class RebalanceHint(LenientModel):
     task_id: int = 0
     from_user_id: str = ""
     to_user_candidates: list[str] = Field(
@@ -41,7 +42,7 @@ class RebalanceHint(BaseModel):
     reason: str = ""
 
 
-class WorkloadResult(BaseModel):
+class WorkloadResult(LenientModel):
     members: list[MemberLoad] = Field(default_factory=list)
     bottlenecks: list[str] = Field(
         default_factory=list,

@@ -1,21 +1,22 @@
 # app/workers/project/cost.py
 """project / cost 워커 — 예산 소진 속도와 초과 위험."""
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.prompts import cost as prompt
+from app.schemas.lenient import LenientModel
 from app.tools.budget_tool import BUDGET_TOOLS
 from app.tools.project_query import get_project_overview
 from app.workers.base import WorkerSpec
 
 
-class CostDriver(BaseModel):
+class CostDriver(LenientModel):
     category: str = Field(default="", description="외주 / 라이선스 / 인프라 등")
     amount: int = 0
     note: str = ""
 
 
-class CostLever(BaseModel):
+class CostLever(LenientModel):
     action: str = Field(default="", description="절감 수단")
     expected_saving: int = Field(default=0, description="예상 절감액(원)")
     tradeoff: str = Field(
@@ -23,7 +24,7 @@ class CostLever(BaseModel):
     )
 
 
-class CostResult(BaseModel):
+class CostResult(LenientModel):
     budget_total: int = 0
     spent: int = 0
     committed: int = Field(default=0, description="결재 진행 중이라 사실상 묶인 금액")
