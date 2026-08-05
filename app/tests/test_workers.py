@@ -107,21 +107,21 @@ def test_hcm_도메인이면_부하지표를_코드로_계산해_넣는다(conte
     assert minju["available_days"] == minju["working_days"] - 5
 
 
-def test_hcm이_없으면_인력데이터를_긁지_않는다(request_p001):
+async def test_hcm이_없으면_인력데이터를_긁지_않는다(request_p001):
     """불필요한 조회를 막는다."""
     plan = AnalysisPlan(domains=["project"], entities=Entities(project_ids=[1001]))
-    context = build_context(plan, request_p001)
+    context = await build_context(plan, request_p001)
 
     assert context.workloads == []
     assert context.candidates == []
     assert context.projects  # 프로젝트는 그대로 있다
 
 
-def test_대상이_없으면_참여중인_프로젝트로_떨어진다(request_p001):
+async def test_대상이_없으면_참여중인_프로젝트로_떨어진다(request_p001):
     request_p001.ui_context.project_id = None
     plan = AnalysisPlan(domains=["project"])
 
-    context = build_context(plan, request_p001)
+    context = await build_context(plan, request_p001)
 
     # u001 은 p001, p003 참여 (p000 은 COMPLETED 라 제외)
     assert {p.id for p in context.projects} == {1001, 1003}
@@ -588,8 +588,17 @@ def test_두_도메인을_고르면_다섯_워커가_돈다():
 
 
 def test_아직_없는_도메인은_조용히_건너뛴다():
-    assert registry.specs_for_domains(["meeting"]) == []
-    assert registry.unsupported_domains(["project", "meeting"]) == ["meeting"]
+    # vacation 은 담당자 1 몫이라 아직 워커가 없다.
+    assert registry.specs_for_domains(["vacation"]) == []
+    assert registry.unsupported_domains(["project", "vacation"]) == ["vacation"]
+
+
+def test_meeting_도메인도_라우팅에_잡힌다():
+    """담당자 3 에이전트를 어댑터로 붙였다."""
+    specs = registry.specs_for_domains(["meeting"])
+
+    assert [s.node_name for s in specs] == ["meeting.schedule"]
+    assert specs[0].runner is not None  # 프롬프트가 아니라 자체 구현으로 돈다
 
 
 def test_축_이름으로_워커를_찾을_수_있다():
@@ -603,9 +612,11 @@ def test_축_이름으로_워커를_찾을_수_있다():
 
 def test_모든_워커는_결과스키마와_프롬프트를_갖는다():
     for spec in registry.all_specs():
+        assert spec.result_model is not None
+        if spec.runner is not None:
+            continue  # 자체 구현 워커는 프롬프트·도구를 쓰지 않는다
         assert spec.role.strip(), f"{spec.dimension} 역할 프롬프트 없음"
         assert spec.method.strip(), f"{spec.dimension} 판단절차 프롬프트 없음"
-        assert spec.result_model is not None
         assert spec.tools, f"{spec.dimension} 에 도구가 없음"
 
 

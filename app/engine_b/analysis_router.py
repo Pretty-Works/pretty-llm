@@ -34,7 +34,7 @@ _VACATION_HINTS = ("휴가", "연차", "부재")
 
 # ─── 공개 진입점 ──────────────────────────────────────────────────
 
-def route(request: AnalysisRequest, *, force_mode: Mode | None = None) -> AnalysisPlan:
+async def route(request: AnalysisRequest, *, force_mode: Mode | None = None) -> AnalysisPlan:
     """질의 1건 -> 분석 계획 1개."""
     messages = [
         SystemMessage(content=prompts.SYSTEM),
@@ -42,7 +42,7 @@ def route(request: AnalysisRequest, *, force_mode: Mode | None = None) -> Analys
     ]
 
     try:
-        plan = llm_client.structured_call(
+        plan = await llm_client.structured_call(
             messages,
             AnalysisPlan,
             profile="reasoning",
@@ -151,14 +151,14 @@ def _fallback_plan(request: AnalysisRequest) -> AnalysisPlan:
 
 # ─── Orchestrator 호환 진입점 ─────────────────────────────────────
 
-def run(domain: Domain, req) -> dict:
+async def run(domain: Domain, req) -> dict:
     """AgentRequest 를 받아 그래프를 끝까지 돌린다. 담당자 1의 orchestrator 가 부른다.
 
     domain 은 orchestrator 의 힌트일 뿐이고, 실제 도메인은 라우터가 다시 정한다.
     """
     from app.engine_b.graph import run_analysis
 
-    state = run_analysis(to_analysis_request(req))
+    state = await run_analysis(to_analysis_request(req))
     result = state.get("result")
     return {
         "domain": domain.value,

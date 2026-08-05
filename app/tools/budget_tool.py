@@ -32,9 +32,9 @@ def _json(payload: Any) -> str:
 # ─── 조회 툴 (워커가 자율 호출) ───────────────────────────────────
 
 @tool
-def get_project_budget(project_id: int) -> str:
+async def get_project_budget(project_id: int) -> str:
     """프로젝트 예산 현황(총액·집행액·결재중 금액·잔액·소진율)을 조회한다."""
-    budget = fetch_budget(project_id)
+    budget = await fetch_budget(project_id)
     if not budget:
         return _json({"error": "예산 정보가 없습니다.", "project_id": project_id})
 
@@ -51,10 +51,10 @@ def get_project_budget(project_id: int) -> str:
 
 
 @tool
-def list_project_expenses(project_id: int, limit: int = 20) -> str:
+async def list_project_expenses(project_id: int, limit: int = 20) -> str:
     """확정된 지출 내역을 최신순으로 조회한다. 어떤 항목이 예산을 갉아먹었는지 볼 때 쓴다."""
     try:
-        expenses = backend_client.get(_EXPENSE_PATH.format(project_id=project_id))
+        expenses = await backend_client.get(_EXPENSE_PATH.format(project_id=project_id))
     except BackendUnavailable:
         expenses = demo_data.list_expenses(project_id)
 
@@ -76,10 +76,10 @@ def list_project_expenses(project_id: int, limit: int = 20) -> str:
 
 
 @tool
-def list_pending_approvals(project_id: int) -> str:
+async def list_pending_approvals(project_id: int) -> str:
     """결재 진행 중인(아직 집행 전이지만 확정에 가까운) 지출 문서를 조회한다."""
     try:
-        approvals = backend_client.get(_APPROVAL_PATH.format(project_id=project_id))
+        approvals = await backend_client.get(_APPROVAL_PATH.format(project_id=project_id))
     except BackendUnavailable:
         approvals = demo_data.list_pending_approvals(project_id)
     total = sum(int(a.get("amount", 0) or 0) for a in approvals)
@@ -88,10 +88,10 @@ def list_pending_approvals(project_id: int) -> str:
 
 # ─── 비-툴 진입점 (Context Builder 가 직접 호출) ──────────────────
 
-def fetch_budget(project_id: int) -> dict | None:
+async def fetch_budget(project_id: int) -> dict | None:
     """Context Builder 가 직접 쓰는 비-툴 진입점."""
     try:
-        return backend_client.get(_BUDGET_PATH.format(project_id=project_id))
+        return await backend_client.get(_BUDGET_PATH.format(project_id=project_id))
     except BackendUnavailable:
         return demo_data.get_budget(project_id)
 

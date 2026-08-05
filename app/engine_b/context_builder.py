@@ -33,26 +33,26 @@ log = get_logger("engine_b.context_builder")
 _DEFAULT_WINDOW_DAYS = 60
 
 
-def build_context(plan: AnalysisPlan, request: AnalysisRequest) -> AnalysisContext:
+async def build_context(plan: AnalysisPlan, request: AnalysisRequest) -> AnalysisContext:
     """라우팅 결과를 바탕으로 분석에 필요한 사실을 모은다."""
     settings = get_settings()
     as_of = request.as_of or settings.as_of()
 
     context = AnalysisContext(as_of=as_of)
-    context.requester = _member_from_user(hr_tool.fetch_user(user_id=request.user_id))
+    context.requester = _member_from_user(await hr_tool.fetch_user(user_id=request.user_id))
 
-    project_ids = _resolve_project_ids(plan, request)
+    project_ids = await _resolve_project_ids(plan, request)
     if not project_ids:
         context.missing.append("대상 프로젝트를 특정하지 못함")
 
     for project_id in project_ids:
-        snapshot = _load_project(project_id)
+        snapshot = await _load_project(project_id)
         if snapshot is None:
             context.missing.append(f"프로젝트 조회 실패: {project_id}")
             continue
         context.projects.append(snapshot)
 
-        budget = _load_budget(project_id)
+        budget = await _load_budget(project_id)
         if budget is None:
             context.missing.append(f"예산 정보 없음: {project_id}")
         else:
@@ -63,7 +63,7 @@ def build_context(plan: AnalysisPlan, request: AnalysisRequest) -> AnalysisConte
 
     # 사람 관련 도메인일 때만 인력 데이터를 채운다 (불필요한 조회 방지)
     if "hcm" in plan.domains or "vacation" in plan.domains:
-        _load_people(plan, context, window_from, window_to)
+        await _load_people(plan, context, window_from, window_to)
 
     if not context.projects and not context.candidates:
         context.notes.append(
@@ -83,12 +83,12 @@ def build_context(plan: AnalysisPlan, request: AnalysisRequest) -> AnalysisConte
 
 # ─── 대상 해석 ────────────────────────────────────────────────────
 
-def _resolve_project_ids(plan: AnalysisPlan, request: AnalysisRequest) -> list[str]:
+async def _resolve_project_ids(plan: AnalysisPlan, request: AnalysisRequest) -> list[str]:
     """id → 이름 → 화면 컨텍스트 → 참여 프로젝트 순으로 대상을 좁힌다."""
     ids: list[str] = list(plan.entities.project_ids)
 
     for name in plan.entities.project_names:
-        project = project_query.fetch_project(None, project_name=name)
+        project = await project_query.fetch_project(None, project_name=name)
         if project and project["id"] not in ids:
             ids.append(project["id"])
 
@@ -100,7 +100,7 @@ def _resolve_project_ids(plan: AnalysisPlan, request: AnalysisRequest) -> list[s
         import json
 
         try:
-            payload = json.loads(project_query.find_projects.invoke({"user_id": request.user_id}))
+            payload = json.loads(await project_query.find_projects.ainvoke({"user_id": request.user_id}))
             ids = [
                 p["id"]
                 for p in payload.get("projects", [])
@@ -128,8 +128,8 @@ def _resolve_window(
 
 # ─── 적재 ─────────────────────────────────────────────────────────
 
-def _load_project(project_id: int) -> ProjectSnapshot | None:
-    raw = project_query.fetch_project(project_id)
+async def _load_project(project_id: int) -> ProjectSnapshot | None:
+    raw = await project_query.fetch_project(project_id)
     if not raw:
         return None
 
@@ -143,7 +143,7 @@ def _load_project(project_id: int) -> ProjectSnapshot | None:
             hire_date=parse_date(m.get("hire_date")),
             status=m.get("status"),
         )
-        for m in project_query._members(project_id)
+        for m in await project_query._members(project_id)
     ]
 
     todos = [
@@ -156,7 +156,7 @@ def _load_project(project_id: int) -> ProjectSnapshot | None:
             assignee_id=t.get("assignee_id"),
             assignee_name=t.get("assignee_name"),
         )
-        for t in project_query._todos(project_id)
+        for t in await project_query._todos(project_id)
     ]
 
     return ProjectSnapshot(
@@ -170,8 +170,8 @@ def _load_project(project_id: int) -> ProjectSnapshot | None:
     )
 
 
-def _load_budget(project_id: int) -> BudgetSnapshot | None:
-    raw = budget_tool.fetch_budget(project_id)
+async def _load_budget(project_id: int) -> BudgetSnapshot | None:
+    raw = await budget_tool.fetch_budget(project_id)
     if not raw:
         return None
     return BudgetSnapshot(
@@ -183,7 +183,7 @@ def _load_budget(project_id: int) -> BudgetSnapshot | None:
     )
 
 
-def _load_people(
+async def _load_people(
     plan: AnalysisPlan, context: AnalysisContext, window_from: date, window_to: date
 ) -> None:
     """인력 후보군 · 승인 휴가 · 부하 지표를 채운다."""
@@ -196,11 +196,11 @@ def _load_people(
 
     # 2) 질문에 이름이 나온 사람
     for name in plan.entities.user_names:
-        user = hr_tool.fetch_user(name=name)
+        user = await hr_tool.fetch_user(name=name)
         if user:
             candidates.setdefault(user["id"], _member_from_user(user))
     for user_id in plan.entities.user_ids:
-        user = hr_tool.fetch_user(user_id=user_id)
+        user = await hr_tool.fetch_user(user_id=user_id)
         if user:
             candidates.setdefault(user_id, _member_from_user(user))
 
@@ -209,7 +209,7 @@ def _load_people(
         import json
 
         try:
-            payload = json.loads(hr_tool.list_department_members.invoke({}))
+            payload = json.loads(await hr_tool.list_department_members.ainvoke({}))
             for user in payload.get("users", []):
                 candidates.setdefault(user["id"], _member_from_user(user))
         except Exception as exc:
@@ -220,7 +220,7 @@ def _load_people(
 
     # 승인된 휴가 (기간 겹치는 것만)
     for member in context.candidates:
-        for leave in hr_tool.fetch_leaves(member.user_id, window_from, window_to):
+        for leave in await hr_tool.fetch_leaves(member.user_id, window_from, window_to):
             context.leaves.append(
                 LeaveSnapshot(
                     id=leave.get("id", ""),
@@ -235,7 +235,7 @@ def _load_people(
 
     # 부하 지표는 코드로 계산해서 넣는다 (LLM 이 세지 않게)
     context.workloads = [
-        hr_tool.compute_workload(member.user_id, window_from, window_to)
+        await hr_tool.compute_workload(member.user_id, window_from, window_to)
         for member in context.candidates
     ]
 

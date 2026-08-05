@@ -8,6 +8,7 @@ Engine B 의 워커는 보는 축만 다르고 실행 방식은 전부 같다.
 돌리는 코드는 여기 하나만 둔다. 새 축을 추가할 때 이 파일은 건드리지 않아도 된다.
 """
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -56,6 +57,8 @@ class WorkerSpec:
     tools: tuple[BaseTool, ...] = ()
     # 이 워커에게 보여줄 컨텍스트 섹션. 필요 없는 섹션을 빼서 토큰을 아낀다.
     context_sections: tuple[str, ...] = ALL_SECTIONS
+    # 프롬프트 조립 대신 자체 구현을 쓰는 워커용. 담당자 3의 meeting 에이전트가 여기 붙는다.
+    runner: Callable[["WorkerSpec", WorkerPayload], Awaitable[WorkerOutput]] | None = None
 
     @property
     def node_name(self) -> str:
@@ -78,7 +81,7 @@ def _envelope_model(result_model: type[BaseModel]) -> type[BaseModel]:
     )
 
 
-def run_worker(spec: WorkerSpec, payload: WorkerPayload) -> WorkerOutput:
+async def run_worker(spec: WorkerSpec, payload: WorkerPayload) -> WorkerOutput:
     """워커 1개 실행. 실패해도 예외를 밖으로 던지지 않는다.
 
     워커 하나가 죽었다고 그래프 전체가 멈추면 나머지 4개 분석까지 버리게 된다.
@@ -115,7 +118,7 @@ def run_worker(spec: WorkerSpec, payload: WorkerPayload) -> WorkerOutput:
     traces: list[llm_client.ToolCallTrace] = []
     try:
         if spec.tools:
-            loop = llm_client.run_tool_loop(
+            loop = await llm_client.run_tool_loop(
                 messages,
                 list(spec.tools),
                 component=component,
@@ -123,7 +126,7 @@ def run_worker(spec: WorkerSpec, payload: WorkerPayload) -> WorkerOutput:
             )
             messages, traces = loop.messages, loop.traces
 
-        envelope = llm_client.structured_call(
+        envelope = await llm_client.structured_call(
             [*messages, HumanMessage(content=_FINALIZE)],
             _envelope_model(spec.result_model),
             component=component,
@@ -164,10 +167,13 @@ def run_worker(spec: WorkerSpec, payload: WorkerPayload) -> WorkerOutput:
 def make_node(spec: WorkerSpec):
     """LangGraph 노드 함수를 만든다. Send() 로 받은 payload 를 그대로 처리한다."""
 
-    def node(payload: WorkerPayload) -> dict:
-        output = run_worker(spec, payload)
+    async def node(payload: WorkerPayload) -> dict:
+        run = spec.runner or run_worker
+        result = await run(spec, payload)
+        # 자체 구현 워커는 축을 여러 개 내놓을 수 있다 (meeting 이 슬롯+적합도 2개).
+        outputs = result if isinstance(result, list) else [result]
         return {
-            "worker_outputs": [output],
+            "worker_outputs": outputs,
             "trace": [
                 TraceEvent(
                     node=spec.node_name,
@@ -180,6 +186,7 @@ def make_node(spec: WorkerSpec):
                         "error": output.error,
                     },
                 )
+                for output in outputs
             ],
         }
 

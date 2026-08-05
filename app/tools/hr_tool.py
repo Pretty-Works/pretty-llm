@@ -31,65 +31,65 @@ def _json(payload: Any) -> str:
 # ─── 조회 툴 (워커가 자율 호출) ───────────────────────────────────
 
 @tool
-def find_user(name: str = "", user_id: int = 0) -> str:
+async def find_user(name: str = "", user_id: int = 0) -> str:
     """이름 또는 사번(user_id)으로 구성원 프로필(부서·직책·입사일)을 조회한다."""
-    user = fetch_user(user_id=user_id or None, name=name or None)
+    user = await fetch_user(user_id=user_id or None, name=name or None)
     if not user:
         return _json({"error": "해당 구성원을 찾지 못했습니다.", "name": name, "user_id": user_id})
     return _json(user)
 
 
 @tool
-def list_department_members(department: str = "", position: str = "") -> str:
+async def list_department_members(department: str = "", position: str = "") -> str:
     """부서/직책으로 구성원 목록을 조회한다. 대체 인력 후보를 찾을 때 쓴다."""
     try:
         params = {k: v for k, v in {"department": department, "position": position}.items() if v}
-        users = backend_client.get("/api/v1/users", params=params)
+        users = await backend_client.get("/api/v1/users", params=params)
     except BackendUnavailable:
         users = demo_data.list_users(department=department or None, position=position or None)
     return _json({"count": len(users), "users": users})
 
 
 @tool
-def get_user_project_history(user_id: int) -> str:
+async def get_user_project_history(user_id: int) -> str:
     """그 사람이 참여한(했던) 프로젝트와 역할 이력을 조회한다.
 
     skill 데이터가 따로 없으므로, 적합도 판단의 핵심 근거는 이 이력이다.
     """
     try:
-        history = backend_client.get(f"/api/v1/users/{user_id}/projects")
+        history = await backend_client.get(f"/api/v1/users/{user_id}/projects")
     except BackendUnavailable:
         history = demo_data.user_project_history(user_id)
     return _json({"user_id": user_id, "count": len(history), "history": history})
 
 
 @tool
-def list_user_tasks(user_id: int, status: str = "") -> str:
+async def list_user_tasks(user_id: int, status: str = "") -> str:
     """그 사람에게 배정된 할 일을 조회한다. 어떤 종류의 작업을 해왔는지 보는 용도."""
     try:
         params = {k: v for k, v in {"assigneeId": user_id, "status": status}.items() if v}
-        todos = backend_client.get("/api/v1/tasks", params=params)
+        todos = await backend_client.get("/api/v1/tasks", params=params)
     except BackendUnavailable:
         todos = demo_data.list_todos(assignee_id=user_id, status=status or None)
     return _json({"user_id": user_id, "count": len(todos), "tasks": todos})
 
 
 @tool
-def list_user_leaves(user_id: int, date_from: str = "", date_to: str = "") -> str:
+async def list_user_leaves(user_id: int, date_from: str = "", date_to: str = "") -> str:
     """승인된 휴가 일정을 조회한다. (YYYY-MM-DD)
 
     기간을 주면 그 기간에 걸치는 휴가만 반환한다. 미승인 신청은 포함하지 않는다.
     """
-    leaves = fetch_leaves(user_id, parse_date(date_from), parse_date(date_to))
+    leaves = await fetch_leaves(user_id, parse_date(date_from), parse_date(date_to))
     return _json({"user_id": user_id, "count": len(leaves), "leaves": leaves})
 
 
 @tool
-def get_leave_balance(user_id: int, year: int = 0) -> str:
+async def get_leave_balance(user_id: int, year: int = 0) -> str:
     """잔여 연차를 조회한다. 부여일수에서 승인된 휴가일수를 뺀 값이다."""
     target_year = year or get_settings().as_of().year
     try:
-        balance = backend_client.get(
+        balance = await backend_client.get(
             "/api/v1/calendar/leaves/balance", params={"userId": user_id, "year": target_year}
         )
     except BackendUnavailable:
@@ -98,7 +98,7 @@ def get_leave_balance(user_id: int, year: int = 0) -> str:
 
 
 @tool
-def get_user_workload(user_id: int, date_from: str = "", date_to: str = "") -> str:
+async def get_user_workload(user_id: int, date_from: str = "", date_to: str = "") -> str:
     """지정 기간의 업무 부하를 집계한다.
 
     진행 중인 할 일 수, 기간 내 마감 건수, 지연 건수, 승인된 휴가일수,
@@ -107,21 +107,21 @@ def get_user_workload(user_id: int, date_from: str = "", date_to: str = "") -> s
     settings = get_settings()
     start = parse_date(date_from) or settings.as_of()
     end = parse_date(date_to) or date(start.year, 12, 31)
-    return _json(compute_workload(user_id, start, end))
+    return _json(await compute_workload(user_id, start, end))
 
 
 # ─── 비-툴 진입점 (Context Builder / workload 워커가 직접 호출) ────────
 
-def fetch_user(user_id: int | None = None, name: str | None = None) -> dict | None:
+async def fetch_user(user_id: int | None = None, name: str | None = None) -> dict | None:
     try:
         if not user_id:
             raise BackendUnavailable("user_id 없음")
-        return backend_client.get(f"/api/v1/users/{user_id}")
+        return await backend_client.get(f"/api/v1/users/{user_id}")
     except BackendUnavailable:
         return demo_data.get_user(user_id=user_id, name=name)
 
 
-def fetch_leaves(
+async def fetch_leaves(
     user_id: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
@@ -136,14 +136,14 @@ def fetch_leaves(
             }.items()
             if v
         }
-        return backend_client.get("/api/v1/calendar/leaves", params=params)
+        return await backend_client.get("/api/v1/calendar/leaves", params=params)
     except BackendUnavailable:
         return demo_data.list_leaves(
             user_id=user_id, date_from=date_from, date_to=date_to, status="APPROVED"
         )
 
 
-def fetch_schedules(
+async def fetch_schedules(
     user_id: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
@@ -158,14 +158,14 @@ def fetch_schedules(
             }.items()
             if v
         }
-        return backend_client.get("/api/v1/calendar/schedules", params=params)
+        return await backend_client.get("/api/v1/calendar/schedules", params=params)
     except BackendUnavailable:
         return demo_data.list_schedules(
             user_id=user_id, date_from=date_from, date_to=date_to
         )
 
 
-def compute_workload(user_id: int, start: date, end: date) -> dict:
+async def compute_workload(user_id: int, start: date, end: date) -> dict:
     """한 사람의 기간 내 부하 지표를 코드로 계산한다.
 
     LLM 에게 원자료를 통째로 넘겨 세게 하는 대신, 셀 수 있는 것은 코드로 세고
@@ -174,7 +174,7 @@ def compute_workload(user_id: int, start: date, end: date) -> dict:
     settings = get_settings()
     todos = demo_data.list_todos(assignee_id=user_id)
     try:
-        todos = backend_client.get("/api/v1/tasks", params={"assigneeId": user_id})
+        todos = await backend_client.get("/api/v1/tasks", params={"assigneeId": user_id})
     except BackendUnavailable:
         pass
 
@@ -189,7 +189,7 @@ def compute_workload(user_id: int, start: date, end: date) -> dict:
         elif start <= due <= end:
             due_in_window.append(todo)
 
-    leaves = fetch_leaves(user_id, start, end)
+    leaves = await fetch_leaves(user_id, start, end)
     leave_days = 0
     for leave in leaves:
         lstart, lend = parse_date(leave.get("start_date")), parse_date(leave.get("end_date"))
@@ -200,7 +200,7 @@ def compute_workload(user_id: int, start: date, end: date) -> dict:
         if span_start <= span_end:
             leave_days += (span_end - span_start).days + 1
 
-    schedules = fetch_schedules(user_id, start, end)
+    schedules = await fetch_schedules(user_id, start, end)
     meeting_hours = 0.0
     for schedule in schedules:
         try:
@@ -210,7 +210,7 @@ def compute_workload(user_id: int, start: date, end: date) -> dict:
         except (ValueError, TypeError):
             continue
 
-    user = fetch_user(user_id=user_id)
+    user = await fetch_user(user_id=user_id)
     working_days = _working_days(start, end)
     available_days = max(0, working_days - leave_days)
 
