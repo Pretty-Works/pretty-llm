@@ -83,13 +83,13 @@ async def _scenarios() -> None:
         assert "41" in answer or "회의" in answer, answer
         print(f"✅ ② simple_query: {names} → 승인 없이 done ({answer[:40]!r})", flush=True)
 
-        # ── ③ engine_b 라우팅 (스텁) ─────────────────────────
+        # ── ③ engine_b 라우팅 (실물 분석 엔진) ───────────────
         events = await _collect_sse(client, "/api/agent/runs",
                                     _body("이 프로젝트 일정 리스크를 시나리오별로 분석해줘"))
         names = [n for n, _ in events]
-        assert names == ["step", "done"], f"engine_b 스텁 계약 위반: {names}"
-        assert "분석" in events[-1][1]["answer"]
-        print("✅ ③ engine_b 라우팅: 분류 → 스텁이 계약(step→done)대로 응답", flush=True)
+        assert names[-1] == "done" and names.count("step") >= 1, f"계약 위반: {names}"
+        assert len(events[-1][1]["answer"]) > 20, events[-1][1]
+        print(f"✅ ③ engine_b 라우팅: 분류 → 분석 엔진 완주 ({names})", flush=True)
 
         # ── ④ route 영속 — resume 이 같은 에이전트로 ─────────
         body = _body("그룹웨어 프로젝트에 오늘 '주간 점검' 회의록 올려줘. "

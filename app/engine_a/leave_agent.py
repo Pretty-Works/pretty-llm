@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app.common.checkpoint import get_checkpointer
 from app.engine_a.domain_agents import build_domain_agent
+from app.tools.analyze import analyze_impact
 from app.tools.ask_user import ask_user
 from app.tools.leave_tool import leave_balance, leave_create, leave_list, leave_update
 from app.tools.navigate import navigate
@@ -37,7 +38,7 @@ async def get_agent():
     if _agent is None:
         _agent = build_domain_agent(
             [user_me, leave_balance, leave_list, leave_create, leave_update,
-             schedule_list, ask_user, navigate],
+             schedule_list, analyze_impact, ask_user, navigate],
             DOMAIN_PROMPT,
             await get_checkpointer(),
             description_prefix="휴가 신청/변경 요청입니다.",

@@ -94,9 +94,7 @@ async def start_run(req: RunRequest) -> StreamingResponse:
                 f"입력된 폼 값: {req.screenContext.formState})\n{req.goal}")
 
     if decision.route == "engine_b":
-        # 목요일에 팀원 그래프(run_engine_b) 어댑터로 교체 예정.
-        # 스텁도 계약(step→done)은 지킨다 — BE·FE 는 지금부터 붙어도 된다.
-        gen = _engine_b_stub(req)
+        gen = _engine_b_stream(goal, req.runId)
 
     elif decision.route == "simple_query":
         agent = await simple_query.get_agent()
@@ -194,18 +192,22 @@ def _validated_command(req: ResumeRequest, snapshot, run_id: str):
                                      n_requests=_pending_request_count(snapshot))
 
 
-async def _engine_b_stub(req: RunRequest):
-    """engine_b 라우팅 스텁 — 분류가 맞는지 계약대로 응답만 한다.
+async def _engine_b_stream(goal: str, run_id: str):
+    """engine_b 직행 어댑터 — 분석 엔진의 중립 dict 를 v2 이벤트로 번역한다.
 
-    목요일에 app/engine_b/runner.run_engine_b 를 v2 이벤트로 번역하는
-    어댑터로 교체된다 (그들의 data:{"step":...} 형식 → 우리 step 이벤트).
+    엔진 B 계약(runner.run_engine_b): progress 여러 번 → result 1회.
+    progress → step, result.answer → done. 실패는 _guard 가 error 로 마감.
     """
-    yield sse.step("분석 요청을 확인하는 중...")
-    yield sse.sse_event("done", {
-        "answer": "이 요청은 심층 분석(Engine B) 대상으로 분류되었습니다. "
-                  "분석 엔진 연결이 완료되면 결과를 제공해 드릴게요.",
-        "action": None,
-    })
+    from app.engine_b.runner import run_engine_b
+
+    answer = ""
+    async for ev in run_engine_b(goal, run_id):
+        if ev["type"] == "progress":
+            yield sse.step(str(ev["text"])[:100])
+        elif ev["type"] == "result":
+            answer = ev["answer"]
+    yield sse.sse_event("done", {"answer": answer or "분석 결과를 만들지 못했습니다.",
+                                 "action": None})
 
 
 async def _guard(gen):
