@@ -491,3 +491,22 @@ class WorkerPayload(TypedDict, total=False):
     dimension: Dimension
     feedback: list[str]
     attempt: int
+
+
+# ─── Tradeoff (담당자3) ──────────────────────────────────────
+#     Replanning 최종 단계. 여러 시나리오를 축별로 비교하고 '추천안'을 낸다.
+#     ★ 추천이지 확정이 아니다 — 결과는 HITL 제안으로 나가고 실제 반영은 승인 이후.
+class ScenarioComparison(BaseModel):
+    scenario_type: str                       # 일정연장 / 인력추가 / 범위축소
+    schedule_recovery: str = ""              # 일정 회복 효과: 높음 / 중간 / 낮음
+    cost_impact: str = ""                    # 비용 부담:      높음 / 중간 / 낮음
+    risk_level: str = ""                     # 리스크:         높음 / 중간 / 낮음
+    summary: str = ""                        # 한 줄 요약
+
+
+class TradeoffResult(BaseModel):
+    recommended_scenario: str                # 추천 시나리오 유형 (확정 아님, 제안)
+    reason: str                              # 현재 맥락에서 이 안을 추천하는 근거
+    comparisons: list[ScenarioComparison] = Field(default_factory=list)
+    tradeoffs: list[str] = Field(default_factory=list)   # 승인 카드에 노출할 트레이드오프
+    confidence: float = 0.7

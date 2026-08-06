@@ -10,7 +10,7 @@ Pydantic v2.
 
 from __future__ import annotations
 
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Generic, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -69,18 +69,57 @@ class DecisionResult(BaseModel):
     auditLogId: Optional[str] = None
 
 
-# ─── FastAPI → Spring 공통 응답 (연동 규격 §4) ──────────────
+# ─── FastAPI → BE SSE 이벤트 5종 (연동 규격 v2 §4) ──────────
+# event: step
+class StepEvent(BaseModel):
+    text: str                                      # 진행 상황 한 줄. 100자 이하
+
+# event: approval_request
+class ApprovalOption(BaseModel):
+    id: str
+    label: str
+
+class ApprovalRequestEvent(BaseModel):
+    toolCallId: str                                # LLM팀이 발급하는 도구 호출 식별자
+    tool: str                                      # 예: meeting.create
+    access: Literal["READ", "WRITE"]               # BE가 해석하는 유일한 필드
+    summary: str                                   # 승인 카드 제목. 60자 이하
+    params: dict[str, Any]                         # 내부 API 요청 바디 원본
+    alternatives: list[ApprovalOption] = Field(default_factory=list)
+    # previewText는 BE가 params에서 생성 → LLM이 보내지 않음
+
+# event: question
+class QuestionOption(BaseModel):
+    id: str
+    label: str
+    description: Optional[str] = None
+
+class QuestionEvent(BaseModel):
+    text: str                                      # 질문 문구. 200자 이하
+    options: list[QuestionOption] = Field(default_factory=list)
+    multiple: bool = False
+    allowFreeText: bool = True
+
+# event: done
 class ActionPayload(BaseModel):
-    type: str                                      # FILL_FORM | NAVIGATE 등
-    requiresApproval: bool                         # Spring이 해석하는 유일한 필드
-    summary: Optional[str] = None                 # 승인 카드 표시 문구
-    targetScreen: Optional[str] = None            # 이동할 화면 식별자
+    type: str                                      # NAVIGATE | FILL_FORM
+    label: str                                     # 버튼 문구. 30자 이하
+    targetScreen: str                              # 화면 식별자
     params: dict[str, Any] = Field(default_factory=dict)
-    formData: dict[str, Any] = Field(default_factory=dict)
+    formData: dict[str, Any] = Field(default_factory=dict)  # FILL_FORM일 때만
+
+class DoneEvent(BaseModel):
+    answer: str                                    # 말풍선 텍스트
+    action: Optional[ActionPayload] = None         # 없으면 null
+
+# event: error
+class ErrorEvent(BaseModel):
+    code: str                                      # AGENT_0XX
+    message: str                                   # 사용자에게 보일 실패 사유
 
 
 class AgentResponse(BaseModel):
-    answer: str                                    # 말풍선 텍스트
+    answer: str                                    # 말풍선 텍스트 (v1 호환용)
     success: bool                                  # LLM팀이 직접 판정
     action: Optional[ActionPayload] = None         # 없으면 null
     raw: Optional[dict[str, Any]] = None           # 디버깅용 원본

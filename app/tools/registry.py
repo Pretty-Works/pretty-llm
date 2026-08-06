@@ -47,12 +47,14 @@ AUTO_ALLOWED: frozenset[str] = frozenset({
     "task.create",
     "task.toggleStatus",         # 토글이라 원복
     "milestone.toggleStatus",
+    "replan.save",               # 제안 저장 — 실 데이터 변경 없음
 })
 
 AUTO_FORBIDDEN: frozenset[str] = frozenset({
     "leave.create", "leave.update",          # 승인자에게 알림이 이미 감
     "schedule.create", "schedule.update",    # 참석자 전원에게 알림
     "expense.create",                        # 돈
+    "replan.apply",                          # 배치 반영 + 여러 구성원에게 알림
 })
 
 
@@ -127,6 +129,18 @@ WRITE_TOOLS: dict[str, dict] = {
         "method": "PATCH",
         "path": "/projects/{projectId}/milestones/{milestoneId}/status",
         "path_params": ("projectId", "milestoneId"),
+    },
+    "replan_save": {
+        "catalog": "replan.save",           # 제안 저장 — 실 데이터 변경 없음(승인 불필요)
+        "method": "POST",
+        "path": "/projects/{projectId}/replans",
+        "path_params": ("projectId",),
+    },
+    "replan_apply": {
+        "catalog": "replan.apply",          # AUTO_FORBIDDEN — 저장분에서 꺼내 반영(승인 필요)
+        "method": "POST",
+        "path": "/projects/{projectId}/replans/{replanId}/apply",
+        "path_params": ("projectId", "replanId"),
     },
 }
 
