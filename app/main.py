@@ -49,6 +49,11 @@ from app.api import agent as agent_api  # noqa: E402
 
 app.include_router(agent_api.router)
 
+# 배치용 탭 요약 생성 API (BE→LLM, 단발 JSON) — 역시 /api/v1 밖 계약이라 prefix 없이 등록
+from app.api.project import agent_router as project_summary_router  # noqa: E402
+
+app.include_router(project_summary_router)
+
 
 # 글로벌 예외 핸들러
 @app.exception_handler(Exception)
