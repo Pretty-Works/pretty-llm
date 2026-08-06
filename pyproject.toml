@@ -49,3 +49,15 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic-settings>=2.5.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+# app.* 를 임포트할 수 있도록 프로젝트 루트를 sys.path 에 넣는다.
+pythonpath = ["."]
+testpaths = ["app/tests"]
+asyncio_mode = "auto"
