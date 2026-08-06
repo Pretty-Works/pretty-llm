@@ -121,3 +121,31 @@ def truncate(text: str, limit: int = 300) -> str:
     """프롬프트/로그에 원문을 통째로 넣지 않기 위한 축약."""
     text = (text or "").strip()
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+# ─── LLM JSON 응답 파싱 (담당자3 · tradeoff/scenario_executor 공용) ───
+import json
+import re
+
+
+def parse_json_response(text: str) -> dict:
+    """LLM 텍스트 응답에서 JSON 오브젝트 하나를 dict로. 코드펜스/잡설 방어."""
+    if not text or not text.strip():
+        raise ValueError("빈 LLM 응답")
+
+    s = text.strip()
+
+    fence = re.search(r"```(?:json)?\s*(.+?)\s*```", s, re.DOTALL)
+    if fence:
+        s = fence.group(1).strip()
+
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+
+    start, end = s.find("{"), s.rfind("}")
+    if start != -1 and end > start:
+        return json.loads(s[start : end + 1])
+
+    raise ValueError(f"JSON 파싱 실패: {text[:200]}")

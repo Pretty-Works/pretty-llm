@@ -140,3 +140,5 @@ async def _run_baseline(goal: str, run_id: str) -> AsyncIterator[dict[str, Any]]
 
     yield {"type": "result", "answer": answer,
            "detail": {"sources": {k: True for k in facts}, "engine": "baseline"}}
+def _sse(event_type: str, payload: dict) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
