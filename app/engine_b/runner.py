@@ -25,6 +25,7 @@ from typing import Any, AsyncIterator
 from langchain.chat_models import init_chat_model
 
 from app.clients.backend import backend
+from app.common.run_context import current_run_id
 from app.config import settings
 
 # 노드 이름 → 사용자에게 보일 진행 문구. 워커 노드는 이름이 동적이라 기본 문구로.
@@ -46,6 +47,7 @@ def _graph():
 async def run_engine_b(goal: str, run_id: str,
                        screen: str = "HOME") -> AsyncIterator[dict[str, Any]]:
     """심층 분석 실행. progress 여러 번 → result 1회. 그래프 실패 시 기본 분석 폴백."""
+    current_run_id.set(run_id)   # 그래프 안 조회 도구들이 X-Run-Id 로 쓴다
     try:
         async for ev in _run_graph(goal, run_id):
             yield ev

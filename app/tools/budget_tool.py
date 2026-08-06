@@ -4,8 +4,9 @@
 `spent` 는 확정 지출, `committed` 는 결재 진행 중이라 아직 안 나갔지만 사실상 묶인 금액이다.
 잔여 예산을 볼 때 committed 를 빼먹으면 실제보다 여유가 있어 보이므로 항상 같이 본다.
 
-TODO(백엔드): 재무 API 경로가 아직 명세되지 않아 아래 경로는 가정값이다.
-             Notion API 명세서에 확정되면 _BUDGET_PATH 만 고치면 된다.
+조회 창구는 clients/backend.py 하나다 (2026-08-07 통일 — X-Run-Id 는 run_context 로 전파).
+mock 모드·run_id 부재·호출 실패면 demo_data 픽스처로 폴백한다.
+budget·expenses 는 내부도구 명세 확정, 결재 중(approvals)은 명세가 없어 픽스처 전용이다.
 """
 
 import json
@@ -13,20 +14,35 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from app.common import backend_client
-from app.common.backend_client import BackendUnavailable
+from app.clients.backend import backend
+from app.common.run_context import current_run_id
+from app.config import get_settings
 from app.tools import demo_data
 from app.utils.logger import get_logger
 
 log = get_logger("tools.budget")
 
-_BUDGET_PATH = "/api/v1/projects/{project_id}/budget"
-_EXPENSE_PATH = "/api/v1/projects/{project_id}/expenses"
-_APPROVAL_PATH = "/api/v1/projects/{project_id}/approvals"
+_BUDGET_PATH = "/projects/{project_id}/budget"     # budget.summary
+_EXPENSE_PATH = "/projects/{project_id}/expenses"  # expense.list
 
 
 def _json(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+async def _get(path: str, **params: Any) -> Any | None:
+    """실백엔드 조회. mock 모드·run_id 부재·실패면 None — 호출부가 픽스처로 폴백한다."""
+    if get_settings().uses_fixtures:
+        return None
+    run_id = current_run_id.get()
+    if not run_id:
+        log.warning("run_id 없이 내부도구 호출: %s — 픽스처 폴백", path)
+        return None
+    try:
+        return await backend.get(path, run_id, **params)
+    except Exception as exc:  # 조회 실패로 분석을 죽이지 않는다 (폴백 원칙)
+        log.warning("backend GET %s 실패 -> 픽스처 폴백: %s", path, exc)
+        return None
 
 
 # ─── 조회 툴 (워커가 자율 호출) ───────────────────────────────────
@@ -53,10 +69,17 @@ async def get_project_budget(project_id: int) -> str:
 @tool
 async def list_project_expenses(project_id: int, limit: int = 20) -> str:
     """확정된 지출 내역을 최신순으로 조회한다. 어떤 항목이 예산을 갉아먹었는지 볼 때 쓴다."""
-    try:
-        expenses = await backend_client.get(_EXPENSE_PATH.format(project_id=project_id))
-    except BackendUnavailable:
+    raw = await _get(_EXPENSE_PATH.format(project_id=project_id))
+    if raw is None:
         expenses = demo_data.list_expenses(project_id)
+    else:  # expense.list → 픽스처 모양으로 정규화
+        expenses = [
+            {"id": e.get("expenseId"), "date": e.get("expenseDate"),
+             "category": e.get("categoryLabel") or e.get("category"),
+             "amount": e.get("amount"), "purpose": e.get("purpose"),
+             "spender": e.get("spenderName")}
+            for e in raw.get("expenses", [])
+        ]
 
     expenses = sorted(expenses, key=lambda e: str(e.get("date", "")), reverse=True)[:limit]
     by_category: dict[str, int] = {}
@@ -78,10 +101,8 @@ async def list_project_expenses(project_id: int, limit: int = 20) -> str:
 @tool
 async def list_pending_approvals(project_id: int) -> str:
     """결재 진행 중인(아직 집행 전이지만 확정에 가까운) 지출 문서를 조회한다."""
-    try:
-        approvals = await backend_client.get(_APPROVAL_PATH.format(project_id=project_id))
-    except BackendUnavailable:
-        approvals = demo_data.list_pending_approvals(project_id)
+    # 내부도구 명세 없음 — BE 명세 확정 전까지 픽스처 전용
+    approvals = demo_data.list_pending_approvals(project_id)
     total = sum(int(a.get("amount", 0) or 0) for a in approvals)
     return _json({"project_id": project_id, "count": len(approvals), "total_amount": total, "approvals": approvals})
 
@@ -90,10 +111,18 @@ async def list_pending_approvals(project_id: int) -> str:
 
 async def fetch_budget(project_id: int) -> dict | None:
     """Context Builder 가 직접 쓰는 비-툴 진입점."""
-    try:
-        return await backend_client.get(_BUDGET_PATH.format(project_id=project_id))
-    except BackendUnavailable:
+    raw = await _get(_BUDGET_PATH.format(project_id=project_id))
+    if raw is None:
         return demo_data.get_budget(project_id)
+    # budget.summary → 내부 표현. committed 는 명세에 없어 0 (approvals 명세 나오면 합류)
+    return {
+        "project_id": project_id,
+        "total": raw.get("targetBudget", 0),
+        "spent": raw.get("spentAmount", 0),
+        "committed": raw.get("committed", 0),
+        "execution_rate": raw.get("executionRate"),
+        "elapsed_rate": raw.get("elapsedRate"),
+    }
 
 
 BUDGET_TOOLS = [get_project_budget, list_project_expenses, list_pending_approvals]
