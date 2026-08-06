@@ -177,8 +177,18 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
     seen_calls: set[str] = set()            # 미들웨어가 같은 메시지를 재방출하므로 중복 제거
     final_text = ""
 
-    async for update in agent.astream(agent_input, config=config,
-                                      context=ctx, stream_mode="updates"):
+    # "custom" 을 같이 구독하는 이유: 오래 걸리는 도구(analyze_impact 의 엔진 B)가
+    # 실행 도중 runtime.stream_writer 로 밀어 넣는 진행상황을 step 으로 중계해야
+    # 90초 무이벤트 차단(규격)에 안 걸린다.
+    async for mode, chunk in agent.astream(agent_input, config=config, context=ctx,
+                                           stream_mode=["updates", "custom"]):
+        if mode == "custom":
+            text = chunk.get("text") if isinstance(chunk, dict) else str(chunk)
+            if text:
+                yield sse.step(str(text)[:100])
+            continue
+
+        update = chunk
         # ① 멈춤 — 무엇이 멈췄는지에 따라 이벤트가 갈린다. 스트림은 둘 다 닫는다.
         #    · 미들웨어가 쓰기 도구를 가로챔  → approval_request
         #    · ask_user 가 스스로 interrupt() → question

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from app.common.checkpoint import get_checkpointer
 from app.engine_a.domain_agents import build_domain_agent
+from app.tools.analyze import analyze_impact
 from app.tools.ask_user import ask_user
 from app.tools.meeting_tool import meeting_create, meeting_detail, meeting_list
 from app.tools.navigate import navigate
@@ -38,7 +39,7 @@ async def get_agent():
     if _agent is None:
         _agent = build_domain_agent(
             [user_me, project_search, project_members, meeting_list, meeting_detail,
-             meeting_create, ask_user, navigate],
+             meeting_create, analyze_impact, ask_user, navigate],
             DOMAIN_PROMPT,
             await get_checkpointer(),
             description_prefix="회의록 저장 요청입니다.",
