@@ -85,6 +85,15 @@ class BackendUnavailableError(BackendError):
     """5xx·타임아웃 — 일시 장애. 같은 토큰으로 재시도 가능."""
 
 
+class WriteRejectedError(AppError):
+    """쓰기 실행이 정책상 좌절됨 — 메시지가 곧 LLM 에게 줄 안내문이다.
+
+    도구는 이걸 잡아 문자열로 반환한다. 그러면 LLM 이 사유를 읽고 파라미터를
+    고쳐 도구를 다시 부르고, 미들웨어가 다시 가로채 새 approval_request 가
+    나간다 (규격 §4: 4xx 는 실행 중단이 아니라 재제안).
+    """
+
+
 # ─────────────────────────────────────────────────────────────
 # 2. 예외 → 응답 변환 핸들러
 #    - AppError 를 잡아서 {errorCode, message, result:null} 형태로 반환.

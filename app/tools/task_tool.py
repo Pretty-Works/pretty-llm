@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from langchain.tools import ToolRuntime, tool
 
-from app.clients.backend import backend, canonical_json
-from app.tools.registry import RunContext, build_request
+from app.clients.backend import backend
+from app.common.exceptions import WriteRejectedError
+from app.tools.registry import RunContext
+from app.tools.write_exec import execute_write
 
 
 @tool
@@ -52,10 +54,10 @@ async def task_create(tasks: list[dict], runtime: ToolRuntime[RunContext]) -> st
            프로젝트 할일의 마감일은 프로젝트 기간 안이어야 한다.
     """
     ctx = runtime.context
-    method, path, params = build_request("task_create", {"tasks": tasks})
-    body = ctx.params_canonical or canonical_json(params)
-    r = await backend.write(method, path, run_id=ctx.run_id,
-                            approval_token=ctx.approval_token, body=body)
+    try:
+        r = await execute_write("task_create", {"tasks": tasks}, ctx)
+    except WriteRejectedError as e:
+        return str(e)
     ids = ", ".join(str(t["taskId"]) for t in r["tasks"])
     return f"할일 {r['createdCount']}건을 등록했습니다 (taskId: {ids})."
 
@@ -73,11 +75,10 @@ async def task_toggle_status(taskId: int, completed: bool,
     completed: 목표 상태 (true=완료, false=미완료)
     """
     ctx = runtime.context
-    method, path, params = build_request("task_toggle_status",
-                                         {"taskId": taskId, "completed": completed})
-    body = ctx.params_canonical or canonical_json(params)
-    r = await backend.write(method, path, run_id=ctx.run_id,
-                            approval_token=ctx.approval_token, body=body)
+    try:
+        r = await execute_write("task_toggle_status", {"taskId": taskId, "completed": completed}, ctx)
+    except WriteRejectedError as e:
+        return str(e)
     if not r.get("changed", True):
         return f"할일 [{taskId}] 은 이미 그 상태였습니다."
     state = "완료" if r["completed"] else "미완료"

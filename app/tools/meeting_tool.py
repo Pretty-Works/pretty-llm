@@ -20,8 +20,10 @@ from __future__ import annotations
 
 from langchain.tools import ToolRuntime, tool
 
-from app.clients.backend import backend, canonical_json
-from app.tools.registry import RunContext, build_request
+from app.clients.backend import backend
+from app.common.exceptions import WriteRejectedError
+from app.tools.registry import RunContext
+from app.tools.write_exec import execute_write
 
 
 @tool
@@ -112,17 +114,10 @@ async def meeting_create(
         "followUp": followUp,
         "recording": recording,
     }
-    method, path, params = build_request("meeting_create", args)
-
-    # BE 가 해시한 바이트가 있으면 그대로. 없으면(mock·폴백) 같은 규칙으로 직렬화.
-    body = ctx.params_canonical or canonical_json(params)
-
-    r = await backend.write(
-        method, path,
-        run_id=ctx.run_id,
-        approval_token=ctx.approval_token,
-        body=body,
-    )
+    try:
+        r = await execute_write("meeting_create", args, ctx)
+    except WriteRejectedError as e:
+        return str(e)
 
     # 저장 결과 화면으로 안내 — done.action 에 실린다 (규격 예시 그대로)
     ctx.action = {
