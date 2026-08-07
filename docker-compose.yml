@@ -1,0 +1,16 @@
+# 실행:  docker compose up -d --build
+# 종료:  docker compose down          (체크포인트는 ./data 에 남는다)
+services:
+  agent:
+    build: .
+    container_name: pretty-llm-agent
+    ports:
+      # 호스트 루프백에만 노출 — 규격 "FastAPI 는 127.0.0.1 바인딩, 호출자는 BE 뿐"
+      - "127.0.0.1:3002:3002"
+    env_file:
+      - .env                    # OPENAI_API_KEY, INTERNAL_API_KEY, MOCK_BACKEND 등
+    volumes:
+      # 체크포인트 영속 — 이게 없으면 재배포마다 승인 대기 건이 증발해
+      # resume(AGENT_016)이 전부 깨진다. 파일 sqlite 를 쓰는 이유.
+      - ./data:/app/data
+    restart: unless-stopped
