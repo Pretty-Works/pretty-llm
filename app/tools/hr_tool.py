@@ -6,6 +6,11 @@ ERD 에 skill 컬럼이 없으므로 '이 사람이 무엇을 잘하는가'는 �
 그래서 skill 조회 툴 대신 `get_user_project_history` 와 `list_user_tasks` 를 제공한다.
 
 가용성은 ERD 원칙대로 '승인된 휴가'만 반영한다. (PENDING 은 제외)
+
+조회 창구는 clients/backend.py 하나다 (2026-08-07 통일 — X-Run-Id 는 run_context 로 전파).
+단, 내부도구 API 는 요청자 본인 스코프뿐이라 이 파일의 대부분(타인의 할 일·휴가·
+잔여연차·프로젝트 이력·부서 검색)은 대응 명세가 없다 — 명세 확정 전까지 픽스처 전용이고,
+이름 검색(user.search)만 실백엔드를 탄다. BE 명세 요청 목록에 올라가 있어야 한다.
 """
 
 import json
@@ -14,8 +19,8 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from app.common import backend_client
-from app.common.backend_client import BackendUnavailable
+from app.clients.backend import backend
+from app.common.run_context import current_run_id
 from app.config import get_settings
 from app.tools import demo_data
 from app.utils.logger import get_logger
@@ -26,6 +31,21 @@ log = get_logger("tools.hr")
 
 def _json(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+async def _get(path: str, **params: Any) -> Any | None:
+    """실백엔드 조회. mock 모드·run_id 부재·실패면 None — 호출부가 픽스처로 폴백한다."""
+    if get_settings().uses_fixtures:
+        return None
+    run_id = current_run_id.get()
+    if not run_id:
+        log.warning("run_id 없이 내부도구 호출: %s — 픽스처 폴백", path)
+        return None
+    try:
+        return await backend.get(path, run_id, **params)
+    except Exception as exc:  # 조회 실패로 분석을 죽이지 않는다 (폴백 원칙)
+        log.warning("backend GET %s 실패 -> 픽스처 폴백: %s", path, exc)
+        return None
 
 
 # ─── 조회 툴 (워커가 자율 호출) ───────────────────────────────────
@@ -42,11 +62,8 @@ async def find_user(name: str = "", user_id: int = 0) -> str:
 @tool
 async def list_department_members(department: str = "", position: str = "") -> str:
     """부서/직책으로 구성원 목록을 조회한다. 대체 인력 후보를 찾을 때 쓴다."""
-    try:
-        params = {k: v for k, v in {"department": department, "position": position}.items() if v}
-        users = await backend_client.get("/api/v1/users", params=params)
-    except BackendUnavailable:
-        users = demo_data.list_users(department=department or None, position=position or None)
+    # 부서·직책 필터 조회는 내부도구 명세 없음(user.search 는 이름 검색만) — 픽스처 전용
+    users = demo_data.list_users(department=department or None, position=position or None)
     return _json({"count": len(users), "users": users})
 
 
@@ -56,21 +73,16 @@ async def get_user_project_history(user_id: int) -> str:
 
     skill 데이터가 따로 없으므로, 적합도 판단의 핵심 근거는 이 이력이다.
     """
-    try:
-        history = await backend_client.get(f"/api/v1/users/{user_id}/projects")
-    except BackendUnavailable:
-        history = demo_data.user_project_history(user_id)
+    # 타인 프로젝트 이력 조회는 내부도구 명세 없음 — 픽스처 전용
+    history = demo_data.user_project_history(user_id)
     return _json({"user_id": user_id, "count": len(history), "history": history})
 
 
 @tool
 async def list_user_tasks(user_id: int, status: str = "") -> str:
     """그 사람에게 배정된 할 일을 조회한다. 어떤 종류의 작업을 해왔는지 보는 용도."""
-    try:
-        params = {k: v for k, v in {"assigneeId": user_id, "status": status}.items() if v}
-        todos = await backend_client.get("/api/v1/tasks", params=params)
-    except BackendUnavailable:
-        todos = demo_data.list_todos(assignee_id=user_id, status=status or None)
+    # 타인 할 일 조회는 내부도구 명세 없음(task.list 는 본인/프로젝트 스코프) — 픽스처 전용
+    todos = demo_data.list_todos(assignee_id=user_id, status=status or None)
     return _json({"user_id": user_id, "count": len(todos), "tasks": todos})
 
 
@@ -88,12 +100,8 @@ async def list_user_leaves(user_id: int, date_from: str = "", date_to: str = "")
 async def get_leave_balance(user_id: int, year: int = 0) -> str:
     """잔여 연차를 조회한다. 부여일수에서 승인된 휴가일수를 뺀 값이다."""
     target_year = year or get_settings().as_of().year
-    try:
-        balance = await backend_client.get(
-            "/api/v1/calendar/leaves/balance", params={"userId": user_id, "year": target_year}
-        )
-    except BackendUnavailable:
-        balance = demo_data.leave_balance(user_id, target_year)
+    # 타인 잔여연차 조회는 내부도구 명세 없음(leave.balance 는 본인 것) — 픽스처 전용
+    balance = demo_data.leave_balance(user_id, target_year)
     return _json(balance)
 
 
@@ -113,12 +121,17 @@ async def get_user_workload(user_id: int, date_from: str = "", date_to: str = ""
 # ─── 비-툴 진입점 (Context Builder / workload 워커가 직접 호출) ────────
 
 async def fetch_user(user_id: int | None = None, name: str | None = None) -> dict | None:
-    try:
-        if not user_id:
-            raise BackendUnavailable("user_id 없음")
-        return await backend_client.get(f"/api/v1/users/{user_id}")
-    except BackendUnavailable:
-        return demo_data.get_user(user_id=user_id, name=name)
+    if name:  # 이름 검색만 내부도구(user.search)가 있다
+        raw = await _get("/users", keyword=name)
+        if raw is not None:
+            hits = raw.get("users", [])
+            if not hits:
+                return None
+            u = hits[0]
+            return {"id": u.get("userId"), "name": u.get("name"),
+                    "department": u.get("department"), "position": u.get("position")}
+    # id 기반 프로필 조회는 내부도구 명세 없음 — 픽스처 전용
+    return demo_data.get_user(user_id=user_id, name=name)
 
 
 async def fetch_leaves(
@@ -126,21 +139,10 @@ async def fetch_leaves(
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> list[dict]:
-    try:
-        params = {
-            k: v
-            for k, v in {
-                "userIds": user_id,
-                "from": date_from.isoformat() if date_from else None,
-                "to": date_to.isoformat() if date_to else None,
-            }.items()
-            if v
-        }
-        return await backend_client.get("/api/v1/calendar/leaves", params=params)
-    except BackendUnavailable:
-        return demo_data.list_leaves(
-            user_id=user_id, date_from=date_from, date_to=date_to, status="APPROVED"
-        )
+    # 타인 휴가 조회는 내부도구 명세 없음(leave.list 는 본인 것) — 픽스처 전용
+    return demo_data.list_leaves(
+        user_id=user_id, date_from=date_from, date_to=date_to, status="APPROVED"
+    )
 
 
 async def fetch_schedules(
@@ -148,21 +150,10 @@ async def fetch_schedules(
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> list[dict]:
-    try:
-        params = {
-            k: v
-            for k, v in {
-                "userIds": user_id,
-                "from": date_from.isoformat() if date_from else None,
-                "to": date_to.isoformat() if date_to else None,
-            }.items()
-            if v
-        }
-        return await backend_client.get("/api/v1/calendar/schedules", params=params)
-    except BackendUnavailable:
-        return demo_data.list_schedules(
-            user_id=user_id, date_from=date_from, date_to=date_to
-        )
+    # 타인 일정 조회는 내부도구 명세 없음(schedule.list 는 본인 참여분) — 픽스처 전용
+    return demo_data.list_schedules(
+        user_id=user_id, date_from=date_from, date_to=date_to
+    )
 
 
 async def compute_workload(user_id: int, start: date, end: date) -> dict:
@@ -172,11 +163,8 @@ async def compute_workload(user_id: int, start: date, end: date) -> dict:
     워커는 '그래서 이게 과부하인가'를 판단하게 한다.
     """
     settings = get_settings()
+    # 타인 할 일 조회는 내부도구 명세 없음 — 픽스처 전용 (명세 확정 시 _get 으로 교체)
     todos = demo_data.list_todos(assignee_id=user_id)
-    try:
-        todos = await backend_client.get("/api/v1/tasks", params={"assigneeId": user_id})
-    except BackendUnavailable:
-        pass
 
     open_todos = [t for t in todos if t.get("status") in {"TODO", "IN_PROGRESS"}]
     overdue, due_in_window = [], []

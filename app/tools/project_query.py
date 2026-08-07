@@ -7,7 +7,9 @@
 워커가 컨텍스트만으로 판단이 어려울 때 스스로 호출한다. (워커당 최대 5회)
 전부 읽기 전용이므로 HITL 승인 대상이 아니다.
 
-백엔드가 떠 있으면 REST 를, 아니면 app/tools/demo_data.py 픽스처를 읽는다.
+조회 창구는 clients/backend.py 하나다 (2026-08-07 통일 — X-Run-Id 는 run_context 로 전파).
+mock 모드·run_id 부재·호출 실패면 demo_data 픽스처로 폴백한다.
+프로젝트 상세(project.detail)는 ⛔ v1 제외라 목록(project.search)에서 집어 쓴다.
 """
 
 import json
@@ -15,8 +17,9 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from app.common import backend_client
-from app.common.backend_client import BackendUnavailable
+from app.clients.backend import backend
+from app.common.run_context import current_run_id
+from app.config import get_settings
 from app.tools import demo_data
 from app.utils.logger import get_logger
 
@@ -27,6 +30,28 @@ def _json(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, default=str)
 
 
+async def _get(path: str, **params: Any) -> Any | None:
+    """실백엔드 조회. mock 모드·run_id 부재·실패면 None — 호출부가 픽스처로 폴백한다."""
+    if get_settings().uses_fixtures:
+        return None
+    run_id = current_run_id.get()
+    if not run_id:
+        log.warning("run_id 없이 내부도구 호출: %s — 픽스처 폴백", path)
+        return None
+    try:
+        return await backend.get(path, run_id, **params)
+    except Exception as exc:  # 조회 실패로 분석을 죽이지 않는다 (폴백 원칙)
+        log.warning("backend GET %s 실패 -> 픽스처 폴백: %s", path, exc)
+        return None
+
+
+def _task(t: dict) -> dict:
+    """task.list 항목 → 픽스처 모양. completed(bool)라 상태는 TODO/DONE 2값만 나온다."""
+    return {"id": t.get("taskId"), "title": t.get("content"), "due_date": t.get("dueDate"),
+            "status": "DONE" if t.get("completed") else "TODO",
+            "assignee_id": t.get("assigneeId"), "project_id": t.get("projectId")}
+
+
 # ─── 조회 툴 (워커가 자율 호출) ───────────────────────────────────
 
 @tool
@@ -35,14 +60,7 @@ async def get_project_overview(project_id: int = 0, project_name: str = "") -> s
 
     project_id 를 모르면 project_name 에 프로젝트명 일부를 넣어도 된다.
     """
-    try:
-        if project_id:
-            project = await backend_client.get(f"/api/v1/projects/{project_id}")
-        else:
-            raise BackendUnavailable("project_id 없이 백엔드 조회 불가")
-    except BackendUnavailable:
-        project = demo_data.get_project(project_id=project_id or None, name=project_name or None)
-
+    project = await fetch_project(project_id or None, project_name or None)
     if not project:
         return _json({"error": "해당 프로젝트를 찾지 못했습니다.", "project_id": project_id, "project_name": project_name})
 
@@ -87,42 +105,60 @@ async def find_projects(user_id: int = 0, status: str = "") -> str:
 
     다른 프로젝트와의 인력·일정 충돌을 볼 때 쓴다.
     """
-    try:
-        params = {k: v for k, v in {"userId": user_id, "status": status}.items() if v}
-        projects = await backend_client.get("/api/v1/projects", params=params)
-    except BackendUnavailable:
+    raw = await _get("/projects")  # project.search — 요청자 참여 프로젝트 스코프
+    if raw is None:
         projects = demo_data.list_projects(user_id=user_id or None, status=status or None)
+    else:
+        projects = [
+            {"id": p.get("projectId"), "name": p.get("name"), "status": p.get("status"),
+             "start_date": p.get("startDate"), "due_date": p.get("targetDate")}
+            for p in raw.get("projects", [])
+        ]
+        if status:
+            projects = [p for p in projects if p.get("status") == status]
+        # 타인(user_id) 필터는 내부도구 명세 없음 — 요청자 스코프 결과를 그대로 쓴다
     return _json({"count": len(projects), "projects": projects})
 
 
 # ─── 내부 헬퍼 - Context Builder 도 재사용한다 (툴 래핑 없이 직접 호출) ────────
 
 async def _members(project_id: int) -> list[dict]:
-    try:
-        return await backend_client.get(f"/api/v1/projects/{project_id}/members")
-    except BackendUnavailable:
+    raw = await _get(f"/projects/{project_id}/members")
+    if raw is None:
         return demo_data.list_project_members(project_id)
+    return [
+        {"user_id": m.get("userId"), "name": m.get("name"), "role": m.get("role"),
+         "department": m.get("department"), "position": m.get("position")}
+        for m in raw.get("members", [])
+    ]
 
 
 async def _todos(
     project_id: int, status: str | None = None, assignee_id: int | None = None
 ) -> list[dict]:
-    try:
-        params = {k: v for k, v in {"status": status, "assigneeId": assignee_id}.items() if v}
-        return await backend_client.get(f"/api/v1/projects/{project_id}/tasks", params=params)
-    except BackendUnavailable:
+    raw = await _get("/tasks", projectId=project_id)
+    if raw is None:
         return demo_data.list_todos(
             project_id=project_id, status=status, assignee_id=assignee_id
         )
+    tasks = [_task(t) for t in raw.get("tasks", [])]
+    if status:  # 내부도구는 상태 필터가 없어 클라이언트에서 거른다
+        tasks = [t for t in tasks if t.get("status") == status]
+    if assignee_id:
+        tasks = [t for t in tasks if t.get("assignee_id") == assignee_id]
+    return tasks
 
 
 async def fetch_project(project_id: int | None, project_name: str | None = None) -> dict | None:
-    try:
-        if not project_id:
-            raise BackendUnavailable("project_id 없음")
-        return await backend_client.get(f"/api/v1/projects/{project_id}")
-    except BackendUnavailable:
+    raw = await _get("/projects")  # project.detail 은 ⛔ v1 제외 — 목록에서 집는다
+    if raw is None:
         return demo_data.get_project(project_id=project_id, name=project_name)
+    for p in raw.get("projects", []):
+        if (project_id and p.get("projectId") == project_id) or \
+           (project_name and project_name in (p.get("name") or "")):
+            return {"id": p.get("projectId"), "name": p.get("name"), "status": p.get("status"),
+                    "start_date": p.get("startDate"), "due_date": p.get("targetDate")}
+    return None  # 실백엔드가 답했는데 없음 — 픽스처로 가짜를 만들지 않는다
 
 
 PROJECT_TOOLS = [
