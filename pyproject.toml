@@ -48,6 +48,9 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic-settings>=2.5.0",
+    # ── Gmail MCP 서버 (mcp_servers/gmail_mcp) ──
+    "cryptography>=42.0.0",   # 저장된 refresh_token/access_token 암호화
+    "itsdangerous>=2.2.0",    # OAuth state 파라미터 서명/검증
 ]
 
 [dependency-groups]
