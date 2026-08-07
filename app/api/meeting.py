@@ -57,33 +57,40 @@ class MeetingDraft(BaseModel):
     attendeeUserIds: list[int] = Field(default_factory=list)
 
 
+# ─── 초안 추출 코어 — API 와 채팅 첨부(FILL_FORM) 도구가 같이 쓴다 ─
+
+async def generate_draft(transcript: str, today: str, members: list[dict]) -> MeetingDraft:
+    """txt 전문 → 초안. LLM 1콜 + 코드 후처리(명단 검증·길이 절단·날짜 형식)."""
+    roster = "\n".join(
+        f"- userId={m.get('userId')} {m.get('name')}"
+        f" ({m.get('department') or '부서 미상'} · {m.get('position') or '직급 미상'})"
+        for m in members
+    ) or "(명단 없음 — attendeeUserIds 는 빈 배열로 둘 것)"
+
+    draft = await llm_client.structured_call(
+        [{"role": "system", "content": SYSTEM},
+         {"role": "user", "content": f"기준일(today): {today}\n\n"
+                                     f"프로젝트 참여자 명단:\n{roster}\n\n"
+                                     f"회의 기록 전문:\n{transcript}"}],
+        MeetingDraft, profile="reasoning", component="meeting_draft",
+    )
+    return _sanitize(draft, {m.get("userId") for m in members})
+
+
 # ─── 엔드포인트 ───────────────────────────────────────────────────
 
 @agent_router.post("/api/agent/meeting-draft", response_model=MeetingDraft)
 async def meeting_draft(req: DraftRequest) -> MeetingDraft:
-    """txt 전문 → 회의록 폼 초안. LLM 1콜 + 코드 후처리(명단·길이·날짜)."""
     try:
         date.fromisoformat(req.today)
     except ValueError:
         raise HTTPException(status_code=422, detail="today 는 yyyy-MM-dd 형식이어야 합니다")
 
-    roster = "\n".join(
-        f"- userId={m.userId} {m.name} ({m.department or '부서 미상'} · {m.position or '직급 미상'})"
-        for m in req.projectMembers
-    ) or "(명단 없음 — attendeeUserIds 는 빈 배열로 둘 것)"
-
     try:
-        draft = await llm_client.structured_call(
-            [{"role": "system", "content": SYSTEM},
-             {"role": "user", "content": f"기준일(today): {req.today}\n\n"
-                                         f"프로젝트 참여자 명단:\n{roster}\n\n"
-                                         f"회의 기록 전문:\n{req.transcript}"}],
-            MeetingDraft, profile="reasoning", component="meeting_draft",
-        )
+        return await generate_draft(req.transcript, req.today,
+                                    [m.model_dump() for m in req.projectMembers])
     except llm_client.LLMNotConfigured as e:
         raise HTTPException(status_code=503, detail=str(e))
-
-    return _sanitize(draft, {m.userId for m in req.projectMembers})
 
 
 def _sanitize(draft: MeetingDraft, roster_ids: set[int]) -> MeetingDraft:
