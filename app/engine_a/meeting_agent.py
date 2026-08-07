@@ -12,7 +12,8 @@ from app.common.checkpoint import get_checkpointer
 from app.engine_a.domain_agents import build_domain_agent
 from app.tools.analyze import analyze_impact
 from app.tools.ask_user import ask_user
-from app.tools.meeting_tool import meeting_create, meeting_detail, meeting_list
+from app.tools.meeting_tool import (meeting_create, meeting_detail,
+                                    meeting_draft_fill, meeting_list)
 from app.tools.navigate import navigate
 from app.tools.project_tool import project_members, project_search
 from app.tools.user_tool import user_me
@@ -28,7 +29,10 @@ DOMAIN_PROMPT = """당신은 그룹웨어의 회의록 담당 에이전트입니
   저장하지 말고 "일정으로 잡아드릴까요?" 라고 안내하라.
 - 회의 날짜는 프로젝트 기간 안이어야 한다 (project_search 결과의 기간 참고).
 - 지난 회의 내용 질문은 meeting_list 로 특정 → meeting_detail 로 전문 조회.
-- 삭제·수정 요청은 meeting_list 로 대상을 특정한 뒤 navigate(MEETING_DETAIL) 로 안내."""
+- 삭제·수정 요청은 meeting_list 로 대상을 특정한 뒤 navigate(MEETING_DETAIL) 로 안내.
+- ★파일이 첨부된 회의록 작성 요청은 meeting_create 로 저장하지 말고
+  meeting_draft_fill 로 작성 화면에 초안만 채워라 — 저장은 사용자가 화면에서 한다.
+  첨부 없이 말로 불러 주는 내용은 기존대로 meeting_create 로 저장한다."""
 
 
 _agent = None

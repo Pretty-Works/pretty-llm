@@ -35,6 +35,9 @@ class RunContext:
     #   fill_form → FILL_FORM(폼 채우기). LLM 은 이 필드를 못 본다 (도구만 쓴다).
     action: dict | None = None
 
+    # 채팅에 첨부된 파일 [{name, content}] — BE 가 텍스트 추출해 runs 바디로 보낸다.
+    attachments: list[dict] | None = None
+
 
 # ─────────────────────────────────────────────────────────────
 # ② 승인 등급 — auto 모드 정책
