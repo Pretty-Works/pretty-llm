@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from langchain.tools import ToolRuntime, tool
 
-from app.clients.backend import backend, canonical_json
-from app.tools.registry import RunContext, build_request
+from app.clients.backend import backend
+from app.common.exceptions import WriteRejectedError
+from app.tools.registry import RunContext
+from app.tools.write_exec import execute_write
 
 
 @tool
@@ -48,10 +50,10 @@ async def milestone_toggle_status(projectId: int, milestoneId: int, completed: b
     """
     ctx = runtime.context
     args = {"projectId": projectId, "milestoneId": milestoneId, "completed": completed}
-    method, path, params = build_request("milestone_toggle_status", args)
-    body = ctx.params_canonical or canonical_json(params)
-    r = await backend.write(method, path, run_id=ctx.run_id,
-                            approval_token=ctx.approval_token, body=body)
+    try:
+        r = await execute_write("milestone_toggle_status", args, ctx)
+    except WriteRejectedError as e:
+        return str(e)
     if not r.get("changed", True):
         return f"마일스톤 [{milestoneId}] 은 이미 그 상태였습니다."
     state = "완료" if r["completed"] else "미완료"

@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from langchain.tools import ToolRuntime, tool
 
-from app.clients.backend import backend, canonical_json
-from app.tools.registry import RunContext, build_request
+from app.clients.backend import backend
+from app.common.exceptions import WriteRejectedError
+from app.tools.registry import RunContext
+from app.tools.write_exec import execute_write
 
 CATEGORIES = "TRANSPORT·MEAL·SOFTWARE·OFFICE_SUPPLY·EDUCATION·LABOR·OUTSOURCING·INFRA·ETC"
 
@@ -74,10 +76,10 @@ async def expense_create(projectId: int, expenseDate: str, category: str,
     ctx = runtime.context
     args = {"projectId": projectId, "expenseDate": expenseDate, "category": category,
             "merchant": merchant, "purpose": purpose, "amount": amount}
-    method, path, params = build_request("expense_create", args)
-    body = ctx.params_canonical or canonical_json(params)
-    r = await backend.write(method, path, run_id=ctx.run_id,
-                            approval_token=ctx.approval_token, body=body)
+    try:
+        r = await execute_write("expense_create", args, ctx)
+    except WriteRejectedError as e:
+        return str(e)
     over = ""
     if r.get("executionRateAfter") and r["executionRateAfter"] > 100:
         over = f" ⚠️ 이 지출로 집행률이 {r['executionRateAfter']}% — 예산 초과입니다."

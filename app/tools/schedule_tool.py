@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from langchain.tools import ToolRuntime, tool
 
-from app.clients.backend import backend, canonical_json
-from app.tools.registry import RunContext, build_request
+from app.clients.backend import backend
+from app.common.exceptions import WriteRejectedError
+from app.tools.registry import RunContext
+from app.tools.write_exec import execute_write
 
 
 @tool
@@ -54,10 +56,10 @@ async def schedule_create(title: str, startAt: str, endAt: str, type: str,
     ctx = runtime.context
     args = {"title": title, "startAt": startAt, "endAt": endAt, "type": type,
             "allDay": allDay, "participantUserIds": participantUserIds}
-    method, path, params = build_request("schedule_create", args)
-    body = ctx.params_canonical or canonical_json(params)
-    r = await backend.write(method, path, run_id=ctx.run_id,
-                            approval_token=ctx.approval_token, body=body)
+    try:
+        r = await execute_write("schedule_create", args, ctx)
+    except WriteRejectedError as e:
+        return str(e)
     return (f"일정 '{title}' 을 잡았습니다 (scheduleId={r['scheduleId']}, "
             f"참가 {r['participantCount']}명).")
 
@@ -82,9 +84,9 @@ async def schedule_update(scheduleId: int, title: str | None, startAt: str | Non
     args = {"scheduleId": scheduleId, "title": title, "startAt": startAt,
             "endAt": endAt, "type": type, "allDay": allDay,
             "participantUserIds": participantUserIds}
-    method, path, params = build_request("schedule_update", args)
-    body = ctx.params_canonical or canonical_json(params)
-    r = await backend.write(method, path, run_id=ctx.run_id,
-                            approval_token=ctx.approval_token, body=body)
+    try:
+        r = await execute_write("schedule_update", args, ctx)
+    except WriteRejectedError as e:
+        return str(e)
     return (f"일정 [{scheduleId}] 을 수정했습니다 "
             f"({r['startAt']}~{r['endAt']}, 참가 {r['participantCount']}명).")
