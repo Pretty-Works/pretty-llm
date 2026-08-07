@@ -79,6 +79,17 @@ async def synthesize(
 
     result.scenario_id = scenario.scenario_id
     result.confidence = min(1.0, max(0.0, result.confidence))
+     # ★ 회의 Tradeoff 결과를 최종 결과에 전달
+    for output in usable:
+        if (
+            output.domain == "meeting"
+            and output.dimension == "tradeoff"
+        ):
+            result.meeting_ranking = (
+                output.result.get("ranked", [])
+            )
+            break
+        
     # 근거는 워커 것을 모아 올린다. 통합 단계가 새 근거를 만들 일은 없다.
     result.evidence = _rollup_evidence(usable)
     if validation:
@@ -98,14 +109,37 @@ async def synthesize(
 
 def _render_workers(outputs: list[WorkerOutput]) -> str:
     blocks = []
+
     for output in sorted(outputs, key=lambda o: o.dimension):
-        payload = json.dumps(output.result, ensure_ascii=False, default=str)
+        payload = json.dumps(
+            output.result,
+            ensure_ascii=False,
+            default=str,
+        )
+
+        # 회의 Tradeoff 결과는 최종 순위가 핵심이므로
+        # 별도 안내를 붙인다.
+        if (
+            output.domain == "meeting"
+            and output.dimension == "tradeoff"
+        ):
+            blocks.append(
+                "### [meeting/tradeoff] 최종 회의 시간 순위 추천\n"
+                "아래 ranked의 rank 1~3을 최종 답변에 반드시 반영하라.\n"
+                f"결과: {truncate(payload, _RESULT_CHAR_LIMIT)}\n"
+                f"판단 근거: {output.reasoning}"
+            )
+            continue
+
         blocks.append(
-            f"### [{output.domain}/{output.dimension}] confidence={output.confidence:.2f} "
-            f"(도구 {output.tool_calls}회, 시도 {output.attempt}회차)\n"
+            f"### [{output.domain}/{output.dimension}] "
+            f"confidence={output.confidence:.2f} "
+            f"(도구 {output.tool_calls}회, "
+            f"시도 {output.attempt}회차)\n"
             f"판단 근거: {output.reasoning}\n"
             f"결과: {truncate(payload, _RESULT_CHAR_LIMIT)}"
         )
+
     return "\n\n".join(blocks)
 
 

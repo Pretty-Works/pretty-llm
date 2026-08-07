@@ -380,11 +380,14 @@ class SynthesisResult(BaseModel):
     # 검증에서 걸렸지만 재생성으로 못 없앤 잔여 위반 (사용자에게 그대로 보여준다)
     unresolved_violations: list[Violation] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
+    meeting_ranking: list[dict[str, Any]] = Field(default_factory=list)
 
     @property
     def requires_approval(self) -> bool:
         """DB 를 바꾸는 제안이 하나라도 있으면 HITL Gate 를 거쳐야 한다."""
         return bool(self.proposed_changes)
+
+    
 
 
 # ─── LangGraph 상태 ───────────────────────────────────────────────
