@@ -21,6 +21,18 @@ def fixed_environment(monkeypatch):
     """기준일 고정 + 픽스처 모드 강제."""
     monkeypatch.setenv("AS_OF", FIXED_TODAY)
     monkeypatch.delenv("BACKEND_BASE_URL", raising=False)
+    # BE 가 실제로 발급한 키가 로컬 .env 에 들어있어도 테스트는 항상 "키 미설정"
+    # 상태(인증 통과)로 시작해야 한다 — 안 그러면 헤더를 안 보내는 기존 엔드포인트
+    # 테스트들(test_ai_summary.py 등)이 개발자 로컬 환경에 따라 401로 깨진다.
+    # ★ delenv 가 아니라 빈 문자열로 setenv 하는 이유: app/config.py의 Settings는
+    #   env_file=".env" 를 물고 있어서, os.environ 에서 지워도(delenv) pydantic-
+    #   settings가 .env 파일을 직접 다시 읽어(dotenv 소스) 거기 적힌 진짜 키값을
+    #   그대로 채워 넣는다 — .env 파일 자체는 monkeypatch 가 못 건드리기 때문에
+    #   delenv 로는 안 지워진다. 빈 문자열로 명시적 setenv 하면 환경변수 소스가
+    #   dotenv 소스보다 우선순위가 높아서 확실히 이긴다.
+    #   인증 자체를 검증하는 테스트(test_internal_api_auth.py)는 이 안에서 필요한
+    #   만큼 직접 setenv 해서 덮어쓴다.
+    monkeypatch.setenv("INTERNAL_API_KEY", "")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -50,3 +62,28 @@ def request_p001() -> AnalysisRequest:
 async def context_p001(project_plan, request_p001):
     """p001 기준 실제 컨텍스트 (픽스처 데이터로 조립)."""
     return await build_context(project_plan, request_p001)
+
+
+@pytest.fixture
+def captured(monkeypatch):
+    """test_tools.py 전용 — backend.write 스파이.
+
+    test_tools.py는 원래 pytest용이 아니라 `python -m app.tests.test_tools`로
+    돌리게 짜여 있었다 — 그 파일의 main()이 backend.write를 손으로 몽키패치해
+    captured 딕셔너리를 채우고, 각 테스트 함수에 인자로 직접 넘겨줬다. pytest로
+    개별 테스트(예: test_params_bytes_identical)만 돌리면 main()이 아예 안 돌아서
+    그 스파이가 안 심긴다 — "fixture 'captured' not found" 로 죽는다. main()의
+    스파이 로직을 그대로 fixture로 옮겨 pytest 경로에서도 동일하게 동작하게 한다."""
+    from app.clients import backend as backend_mod
+
+    result: dict = {}
+    original = backend_mod.backend.write
+
+    async def spy(method, path, run_id, approval_token, body):
+        result.update(method=method, path=path, run_id=run_id,
+                      approval_token=approval_token, body=body)
+        return await original(method, path, run_id=run_id,
+                              approval_token=approval_token, body=body)
+
+    monkeypatch.setattr(backend_mod.backend, "write", spy)
+    return result

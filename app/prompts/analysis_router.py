@@ -74,8 +74,8 @@ FEW_SHOTS = [
         "ui": "screen=project_detail, project_id=1001",
         "answer": {
             "mode": "analysis",
-            "domains": ["project", "hcm"],
-            "focus": ["workload"],
+            "domains": ["vacation"],
+            "focus": [],
             "objective": "이민주의 8월 초 부재가 프로젝트 일정에 주는 영향을 확인한다",
             "entities": {
                 "project_ids": [1001],
@@ -84,8 +84,26 @@ FEW_SHOTS = [
                 "date_to": "2026-08-31",
             },
             "constraints": [],
-            "reasoning": "특정 인원의 부재가 일정에 주는 영향이므로 사람(hcm)과 일정(project)을 같이 본다. 아직 계획을 바꾸자는 게 아니라 영향 확인이라 analysis.",
+            "reasoning": "특정 인원의 휴가가 프로젝트에 주는 영향 확인이라 vacation 하나로 충분하다 — 이 도메인 워커가 마감 겹침·팀원 휴가 겹침을 이미 다 본다. project/hcm 전체 워커까지 돌릴 필요는 없다. 아직 계획을 바꾸자는 게 아니라 영향 확인이라 analysis.",
             "confidence": 0.85,
+        },
+    },
+    {
+        "query": "나 다음달에 2일 정도 휴가 쓰고 싶은데 프로젝트에 지장없게 날짜 추천해줘",
+        "ui": "screen=project_detail, project_id=1001",
+        "answer": {
+            "mode": "analysis",
+            "domains": ["vacation"],
+            "focus": [],
+            "objective": "다음 달 중 프로젝트에 지장이 없는 2일짜리 휴가 날짜를 추천한다",
+            "entities": {
+                "project_ids": [1001],
+                "date_from": "2026-09-01",
+                "date_to": "2026-09-30",
+            },
+            "constraints": ["휴가 기간 2일"],
+            "reasoning": "구체적 날짜 없이 안전한 날짜 추천을 요청했으므로 vacation 하나로 충분하다. '다음달'은 오늘 날짜 기준으로 다음 달 전체 범위로 환산한다.",
+            "confidence": 0.8,
         },
     },
     {

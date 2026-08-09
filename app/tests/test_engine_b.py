@@ -1,5 +1,5 @@
 """
-엔진 B 결합 관통 — 직행(오케스트레이터) · 측면(엔진 A 도구) · 진행 중계
+엔진 B 결합 관통 — 직행(오케스트레이터) · 측면(엔진 A 도구) · 진행 중계 · replan HITL
 
 시나리오:
   ① run_engine_b 단독 — 계약(progress N회 → result 1회) 준수
@@ -7,6 +7,10 @@
   ③ analyze_impact 도구 단위 — stream_writer 로 progress 중계 확인
   ④ 측면: 연차 신청 중 심층 분석 → 분석 step 이 스트림에 섞여 나오고
      이어서 leave.create 승인까지 도달
+  ⑤ replan HITL: 재계획 요청 → engine_b 가 replan 모드로 분기 → ask_user 로
+     3안 제시 → 하나 선택 → replan_save 승인 요청 → 승인 → replan_apply 승인
+     요청 → 승인 → done 반영 완료 (★ 2026-08-09 BE 스펙 개정 — 저장도 승인
+     대상이라 승인이 2회로 늘었다)
 
 실행:  uv run python -m app.tests.test_engine_b
 """
@@ -20,6 +24,7 @@ import uuid
 
 import httpx
 
+from app.config import settings
 from app.main import app
 
 
@@ -78,9 +83,13 @@ async def _scenarios() -> None:
     assert len(pushed) >= 2, f"progress 중계 안 됨: {pushed}"
     print(f"✅ ③ analyze_impact: 진행 {len(pushed)}건 중계 + 결과 반환", flush=True)
 
+    # ★ app/common/auth.py의 verify_internal_api_key — .env에 INTERNAL_API_KEY가
+    #   채워진 순간부터 /api/agent/** 가 이 헤더 없인 401을 낸다(BE 흉내). 키가
+    #   비어 있으면 auth 쪽이 검증 자체를 건너뛰므로 이 헤더를 늘 보내도 안전하다.
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test",
-                                 timeout=180) as client:
+                                 timeout=180,
+                                 headers={"X-Internal-Api-Key": settings.internal_api_key}) as client:
 
         # ── ② 직행 — 분석 요청이 engine_b 로 완주 ────────────
         events = await _collect_sse(client, "/api/agent/runs",
@@ -117,6 +126,65 @@ async def _scenarios() -> None:
         analysis_steps = [t for t in steps if "분석" in t or "종합" in t]
         assert analysis_steps, f"분석 진행 step 이 스트림에 없음: {steps}"
         print(f"✅ ④ 측면: 분석 step {len(analysis_steps)}건 중계 → {outcome}", flush=True)
+
+        # ── ⑤ replan HITL — 3안 생성 → ask_user 선택 → 저장 승인 → 반영 승인 ──
+        # (지연 회복 방향 문구를 쓴다 — scenario_executor.build_scenario_specs() 의
+        #  EXTEND 안이 항상 "마감 +2주"로 고정돼 있어서, "앞당겨야" 류 문구를 쓰면
+        #  방향이 반대인 안이 나온다. 이건 3안생성 파이프라인 자체의 기존 이슈라
+        #  이번 범위에서는 안 건드리고, 테스트 쿼리를 파이프라인 설계 의도에 맞춰
+        #  지연 회복 쪽으로 맞춘다.)
+        body = _body("그룹웨어 AI 고도화 프로젝트 일정이 2주 정도 밀릴 것 같아. "
+                     "어떻게 조정하면 좋을지 안 몇 개 뽑아줘")
+        body["screenContext"] = {"screen": "PROJECT_DETAIL", "formState": {"projectId": 3}}
+        events = await _collect_sse(client, "/api/agent/runs", body)
+        names = [n for n, _ in events]
+        assert names[-1] == "question", f"3안 제시 후 question 이 아님: {names} / {events[-1]}"
+        q = events[-1][1]
+        options = q.get("options", [])
+        assert options, f"3안 옵션이 비어 있음: {q}"
+        print(f"✅ ⑤-1 replan 3안 생성 → 선택 질문: {[o['label'] for o in options]}", flush=True)
+
+        # 첫 번째 안을 선택
+        events = await _collect_sse(client, f"/api/agent/runs/{body['runId']}/resume",
+                                    {"questionId": 1, "selectedIds": [options[0]["id"]],
+                                     "text": options[0]["label"]})
+        names = [n for n, _ in events]
+        # 선택 직후엔 저장(replan.save) 승인이 먼저 뜬다 — 혹시 재확인 질문이 한 번
+        # 더 왔다면 같은 선택으로 한 번 더 밀어준다.
+        hops = 0
+        while names[-1] == "question" and hops < 2:
+            events = await _collect_sse(client, f"/api/agent/runs/{body['runId']}/resume",
+                                        {"questionId": 1, "selectedIds": [options[0]["id"]],
+                                         "text": options[0]["label"]})
+            names = [n for n, _ in events]
+            hops += 1
+        assert names[-1] == "approval_request", f"선택 후 approval_request 가 아님: {names} / {events[-1]}"
+        approval = events[-1][1]
+        assert approval["tool"] == "replan.save", approval["tool"]
+        assert approval["access"] == "WRITE", approval
+        print(f"✅ ⑤-2 선택 → 저장 승인 요청: tool={approval['tool']} summary={approval['summary']!r}",
+              flush=True)
+
+        # 저장 승인 → replan_save 실행 → 곧바로 반영(replan.apply) 승인 요청까지
+        events = await _collect_sse(client, f"/api/agent/runs/{body['runId']}/resume",
+                                    {"toolCallId": approval["toolCallId"], "decision": "APPROVED",
+                                     "approvalToken": "test-approval-token"})
+        names = [n for n, _ in events]
+        assert names[-1] == "approval_request", f"저장 승인 후 approval_request 가 아님: {names} / {events[-1]}"
+        approval2 = events[-1][1]
+        assert approval2["tool"] == "replan.apply", approval2["tool"]
+        assert approval2["access"] == "WRITE", approval2
+        print(f"✅ ⑤-3 저장 완료 → 반영 승인 요청: tool={approval2['tool']} "
+              f"summary={approval2['summary']!r}", flush=True)
+
+        # 반영 승인 → 실제 반영(mock)까지
+        events = await _collect_sse(client, f"/api/agent/runs/{body['runId']}/resume",
+                                    {"toolCallId": approval2["toolCallId"], "decision": "APPROVED",
+                                     "approvalToken": "test-approval-token"})
+        names = [n for n, _ in events]
+        assert names[-1] == "done", f"승인 후 done 이 아님: {names} / {events[-1]}"
+        assert len(events[-1][1]["answer"]) > 0, events[-1][1]
+        print(f"✅ ⑤-4 승인 → 반영 완료: {events[-1][1]['answer'][:60]!r}", flush=True)
 
     print("\n엔진 B 결합 관통 성공", flush=True)
 

@@ -16,39 +16,77 @@ def _headers(access_token: str) -> dict:
     return {"Authorization": f"Bearer {access_token}"}
 
 
-async def search_messages(access_token: str, query: str, max_results: int = 10) -> list[dict[str, Any]]:
-    """Gmail 검색 문법(from:, subject:, is:unread ...) 그대로 지원."""
+async def search_messages(
+    access_token: str,
+    query: str,
+    max_results: int = 10,
+) -> list[dict[str, Any]]:
+    """Gmail 검색 문법(from:, to:, subject:, is:unread ...) 그대로 지원."""
+
     async with httpx.AsyncClient(timeout=10.0) as client:
+        # 1. 검색 조건으로 메일 ID 목록 조회
         list_resp = await client.get(
             f"{_BASE}/messages",
             headers=_headers(access_token),
-            params={"q": query, "maxResults": max_results},
+            params={
+                "q": query,
+                "maxResults": max_results,
+            },
         )
-    list_resp.raise_for_status()
-    ids = [m["id"] for m in list_resp.json().get("messages", [])]
 
-    results = []
-    async with httpx.AsyncClient(timeout=10.0) as client:
+        list_resp.raise_for_status()
+
+        data = list_resp.json()
+
+        print("🔎 Gmail query:", query)
+        print("📦 Gmail response:", data)
+
+        ids = [m["id"] for m in data.get("messages", [])]
+
+        print("📌 message ids:", ids)
+
+        # 2. 각 메일의 상세 정보 조회
+        results = []
+
         for msg_id in ids:
             resp = await client.get(
                 f"{_BASE}/messages/{msg_id}",
                 headers=_headers(access_token),
-                params={"format": "metadata", "metadataHeaders": ["From", "Subject", "Date"]},
+                params={
+                    "format": "metadata",
+                    "metadataHeaders": [
+                        "From",
+                        "To",
+                        "Subject",
+                        "Date",
+                    ],
+                },
             )
+
             resp.raise_for_status()
-            data = resp.json()
-            headers = {h["name"]: h["value"] for h in data.get("payload", {}).get("headers", [])}
+
+            message_data = resp.json()
+
+            headers = {
+                h["name"]: h["value"]
+                for h in message_data.get("payload", {}).get("headers", [])
+            }
+
             results.append(
                 {
-                    "id": data["id"],
-                    "threadId": data.get("threadId"),
-                    "snippet": data.get("snippet"),
+                    "id": message_data["id"],
+                    "threadId": message_data.get("threadId"),
+                    "snippet": message_data.get("snippet"),
                     "from": headers.get("From"),
+                    "to": headers.get("To"),
                     "subject": headers.get("Subject"),
                     "date": headers.get("Date"),
                 }
             )
-    return results
+
+        print("📨 최종 검색 결과:", results)
+
+        return results
 
 
 async def get_message(access_token: str, message_id: str) -> dict[str, Any]:

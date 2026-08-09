@@ -8,7 +8,7 @@ Engine B 의 워커는 보는 축만 다르고 실행 방식은 전부 같다.
 돌리는 코드는 여기 하나만 둔다. 새 축을 추가할 때 이 파일은 건드리지 않아도 된다.
 """
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -55,6 +55,14 @@ class WorkerSpec:
     method: str  # app/prompts/<dimension>.py 의 METHOD
     result_model: type[BaseModel]  # result 필드의 스키마
     tools: tuple[BaseTool, ...] = ()
+    # tools 와 달리 요청 시점에 비동기로 가져와야 하는 도구용 (예: gmail — MCP
+    # 서버에 네트워크로 물어봐야 나온다). 모듈 로드 시점엔 값이 없어 tools 처럼
+    # 정적 튜플로 못 넣는다 — run_worker() 가 실행 직전에 이걸 호출해 tools 와
+    # 합친다. 반드시 읽기 전용 도구만 넣을 것: run_tool_loop() 은 LangGraph의
+    # HumanInTheLoopMiddleware 같은 승인 게이트가 없어서, 쓰기 도구가 섞이면
+    # 사람 승인 없이 그 즉시 실행돼 버린다(app/common/llm_client.py의
+    # run_tool_loop()이 이를 이중으로 막는다 — is_write() 검사 참고).
+    async_tools: Callable[[], Awaitable[Iterable[BaseTool]]] | None = None
     # 이 워커에게 보여줄 컨텍스트 섹션. 필요 없는 섹션을 빼서 토큰을 아낀다.
     context_sections: tuple[str, ...] = ALL_SECTIONS
     # 프롬프트 조립 대신 자체 구현을 쓰는 워커용. 담당자 3의 meeting 에이전트가 여기 붙는다.
@@ -117,10 +125,17 @@ async def run_worker(spec: WorkerSpec, payload: WorkerPayload) -> WorkerOutput:
 
     traces: list[llm_client.ToolCallTrace] = []
     try:
-        if spec.tools:
+        tools = list(spec.tools)
+        if spec.async_tools:
+            try:
+                tools += list(await spec.async_tools())
+            except Exception as exc:  # noqa: BLE001 — 부가 도구 로딩 실패로 워커 전체를 죽이지 않는다
+                log.warning("%s: async_tools 로딩 실패, 정적 도구만으로 진행: %s", spec.dimension, exc)
+
+        if tools:
             loop = await llm_client.run_tool_loop(
                 messages,
-                list(spec.tools),
+                tools,
                 component=component,
                 max_tool_calls=settings.worker_max_tool_calls,
             )

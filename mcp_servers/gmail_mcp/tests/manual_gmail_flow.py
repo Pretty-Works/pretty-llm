@@ -12,6 +12,11 @@ pytest 대상이 아니다 (자동화 불가 — 브라우저 로그인이 껴 �
    GMAIL_MCP_STATE_SECRET / GMAIL_MCP_TOKEN_ENCRYPTION_KEY / INTERNAL_API_KEY 채웠는지 확인.
    (GOOGLE_REDIRECT_URI 는 Google Cloud Console에 등록한 값과 바이트 단위로 같아야 함)
 
+   ★ BE의 run_id→user_id API가 아직 없으므로 GMAIL_MCP_DEV_RUN_PASSTHROUGH=true 도
+     .env 에 넣어둘 것 — 이 스크립트가 쓰는 TEST_RUN_ID 가 그대로 user_id 로 취급된다.
+     BE API 붙으면 이 값을 지우고, TEST_RUN_ID 를 BE가 실제로 발급한 run_id 로 바꿔서
+     같은 스크립트를 그대로 재사용하면 된다.
+
 3) 이 스크립트 실행:
      python -m mcp_servers.gmail_mcp.tests.manual_gmail_flow
 
@@ -31,7 +36,7 @@ import time
 import httpx
 
 BASE_URL = "http://localhost:8100"
-TEST_USER_ID = "manual-test-user"
+TEST_RUN_ID = "manual-test-run"
 
 
 async def main() -> None:
@@ -41,13 +46,19 @@ async def main() -> None:
     if not settings.internal_api_key:
         print("INTERNAL_API_KEY 가 .env 에 없음. 먼저 채워주세요.")
         sys.exit(1)
+    if not settings.dev_run_id_passthrough:
+        print(
+            "GMAIL_MCP_DEV_RUN_PASSTHROUGH=true 가 .env 에 없음. "
+            "BE의 run_id→user_id API가 아직이라면 이 플래그를 켜야 이 스크립트가 동작합니다."
+        )
+        sys.exit(1)
 
     headers = {"X-Internal-Api-Key": settings.internal_api_key}
 
-    # 1) connect-url 발급 (② 버튼 클릭을 대신함)
+    # 1) connect-url 발급 (② 버튼 클릭을 대신함) — user_id가 아니라 run_id를 보낸다.
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=10.0) as client:
         resp = await client.post(
-            "/internal/gmail/connect-url", json={"user_id": TEST_USER_ID}, headers=headers
+            "/internal/gmail/connect-url", json={"run_id": TEST_RUN_ID}, headers=headers
         )
     resp.raise_for_status()
     authorize_url = resp.json()["authorize_url"]
@@ -60,7 +71,7 @@ async def main() -> None:
     connected = False
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=10.0) as client:
         for _ in range(60):
-            status_resp = await client.get(f"/internal/gmail/status/{TEST_USER_ID}", headers=headers)
+            status_resp = await client.get(f"/internal/gmail/status/{TEST_RUN_ID}", headers=headers)
             status_resp.raise_for_status()
             data = status_resp.json()
             if data.get("connected"):
@@ -80,13 +91,31 @@ async def main() -> None:
     async with streamablehttp_client(f"{BASE_URL}/mcp/") as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            result = await session.call_tool(
-                "gmail_search_emails",
-                {"user_id": TEST_USER_ID, "query": "in:inbox", "max_results": 5},
-            )
-            print("gmail_search_emails 결과:")
-            for block in result.content:
-                print(getattr(block, "text", block))
+
+            test_queries = [
+                ("받은편지함", "in:inbox"),
+                ("안 읽은 메일", "is:unread"),
+                ("최근 메일", "after:2026/08/08"),
+                # ("특정 사람", "from:someone@gmail.com"),
+                # ("제목 검색", "subject:회의"),
+                # ("특정 사람과 주고받은 메일", "from:someone@gmail.com OR to:someone@gmail.com"),
+            ]
+
+            for name, query in test_queries:
+                print(f"\n===== {name} =====")
+                print(f"query: {query}")
+
+                result = await session.call_tool(
+                    "gmail_search_emails",
+                    {"run_id": TEST_RUN_ID, "query": query, "max_results": 5},
+                )
+
+                print("RESULT:", result)
+                print("CONTENT:", result.content)
+
+                for block in result.content:
+                    print("BLOCK:", repr(block))
+                    print("TEXT:", getattr(block, "text", None))
 
 
 if __name__ == "__main__":

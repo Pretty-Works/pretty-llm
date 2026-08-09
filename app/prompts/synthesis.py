@@ -27,11 +27,44 @@ SYSTEM = """\
 5. 워커들이 확인하지 못한 채 가정한 것은 assumptions 에, 사람이 정해줘야 할 것은 open_questions 에 적는다.
 
 [proposed_changes]
-- DB 를 실제로 바꾸는 제안만 담는다. (담당자 변경, 마감일 변경, 상태 변경, 예산 조정 등)
+- DB 를 실제로 바꾸는 제안만 담는다. (담당자 변경, 마감일 변경, 상태 변경, 예산 조정, 인력 배치 등)
 - 조회·설명·권고에 그치는 내용은 넣지 않는다.
-- before/after 에는 바뀌는 필드만 적는다. target 은 "todo:101" 처럼 식별자로 쓴다.
 - 이 목록이 비어 있으면 사용자 승인 없이 바로 답변이 나가고,
   하나라도 있으면 사람이 승인해야 반영된다. 그러니 '그냥 참고용 제안'을 여기 넣지 마라.
+- target 과 before/after 의 키 이름은 뒤 단계 파서가 정해진 것만 인식한다 — 아래를 정확히
+  따르고, 표에 없는 키/조합을 쓰면 그 제안 전체가 조용히 버려진다(사용자에게 반영 안 됨).
+  아래 6가지 **말고는 실제로 반영할 방법이 없다** — 이 틀에 안 맞는 변경은 애초에
+  proposed_changes 에 넣지 마라(조회·설명·권고로만 남겨라):
+  · 할일 마감 변경 → target="todo:<id>", after 에 due_date("YYYY-MM-DD").
+  · 할일 삭제(제외) → target="todo:<id>", kind 에 "drop"/"delete"/"remove" 포함,
+    before 에 content 또는 title(그 할 일의 현재 내용) 을 반드시 채운다 — 하드 삭제라
+    내용 대조가 필수다. 특히 '범위 축소'류 조정안에서 뺄 후보를 고를 땐 지어내지
+    말고 project/priority 워커 결과의 deprioritizable(빼도 되는 할 일 id 목록)을
+    그대로 써라 — 그 id의 content/title 은 같은 워커의 ranked 항목 중 일치하는
+    task_id 에서 찾아 옮겨 적는다. deprioritizable 이 비어 있으면 억지로 만들지
+    말고(id 지어내기 금지) actions/open_questions 에 "뺄 만한 비핵심 항목을
+    찾지 못했다"고 텍스트로만 남겨라 — proposed_changes 는 비워도 된다.
+  · 할일 신규 생성 → target="todo:" (뒤에 id 없이 콜론만), kind 에 "create"/"add" 포함,
+    after 에 content(할 일 내용) 와 due_date(마감) 를 둘 다 채운다. 담당자를 지정하려면
+    after.assignee_id 도 채운다(안 채우면 반영한 사람이 담당자가 된다).
+  · **할일 담당자만 바꾸는 재배정은 불가능하다.** 반드시 "할일 삭제"(기존 할 일) +
+    "할일 신규 생성"(같은 내용, after.assignee_id=새 담당자, due_date 는 기존 값 그대로)
+    두 건의 proposed_changes 로 나눠서 내라 — 하나로 합쳐 내면 반영 단계에서 거부된다.
+  · 마일스톤 마감 변경 → target="milestone:<id>", after 에 target_date("YYYY-MM-DD").
+  · 프로젝트 전체 마감 변경 → target="project:<projectId>", after 에 target_date
+    ("YYYY-MM-DD") — due_date 가 아니라 반드시 target_date 로 써라.
+  · 프로젝트에 인력 추가 → target="member:<userId>" 로 쓴다(target="project:<projectId>"
+    가 아니다 — 프로젝트는 이미 대화 컨텍스트에 있으니 target 에는 대상자 id만 담는다).
+    userId 는 반드시 실존 인물의 숫자 id 여야 한다 — skill_fit 워커 결과의
+    assignments[].recommended.user_id(1순위가 마땅찮으면 alternatives[].user_id)에
+    있는 값을 그대로 옮겨 적어라. skill_fit 결과에 구체적인 후보가 하나도 없으면
+    (예: "누군가 투입 필요"처럼 대상자 미정) 이 proposed_change 자체를 만들지 마라 —
+    target="member:" 처럼 id를 비워서 내면 반영 단계에서 조용히 버려지고 사용자에게는
+    아무 승인 요청도 안 뜬다. 대상자를 못 정했으면 actions/open_questions 에 텍스트로만
+    "인력 충원 필요, 후보 미정 — 담당자 확인 필요"라고 남겨라.
+  · **다음은 실제로 반영하는 API 자체가 없다 — proposed_changes 로 절대 만들지 마라**:
+    프로젝트 예산 변경, 프로젝트 시작일·이름 변경, 마일스톤 추가/삭제, 참여자 제외
+    (내보내기). 이런 건 텍스트 권고로만 남기고 "직접 반영은 못 한다"고 밝혀라.
 
 [금지]
 - 워커 결과에 없는 사실을 새로 만들어내는 것

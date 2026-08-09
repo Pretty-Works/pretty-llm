@@ -66,6 +66,26 @@ class GmailMcpSettings(BaseSettings):
         validation_alias="GMAIL_MCP_CREDENTIAL_DB_PATH",
     )
 
+    # ─── run_id → user_id 조회 (Spring BE) ──────────────────────────
+    # Gmail MCP는 user_id를 Agent/LLM에게서 직접 받지 않는다. 대신 run_id만 받아서
+    # 이 BE 엔드포인트에 물어 user_id로 역산한다(run_resolver.py). Agent가 이미 쓰고
+    # 있는 것과 같은 Spring BE라서, 값도 app/config.py의 backend_base_url과 동일하게
+    # BACKEND_BASE_URL 환경변수를 그대로 재사용한다 — 관리 포인트를 늘리지 않으려는 의도.
+    backend_base_url: str = Field(default="http://localhost:3001", validation_alias="BACKEND_BASE_URL")
+    # BE 팀 API 스펙 나오면 실제 경로로 맞춘다({run_id}는 str.format으로 치환).
+    run_lookup_path_template: str = Field(
+        default="/internal/runs/{run_id}/user",
+        validation_alias="GMAIL_MCP_RUN_LOOKUP_PATH_TEMPLATE",
+    )
+    run_lookup_timeout_s: float = 5.0
+
+    # BE의 run_id→user_id API가 아직 없는 동안 로컬 개발/수동 테스트가 막히지 않도록 두는
+    # 임시 우회로. true면 run_id를 그대로 user_id로 취급한다(run_resolver.py 참고).
+    # ⚠️ BE API 붙으면 제일 먼저 꺼야 하는 플래그 — 운영 .env 에는 절대 true로 두지 않는다.
+    dev_run_id_passthrough: bool = Field(
+        default=False, validation_alias="GMAIL_MCP_DEV_RUN_PASSTHROUGH"
+    )
+
     def validate_required(self) -> None:
         """부팅 시 필수값 누락을 바로 터뜨린다 — 운영 중 첫 OAuth 콜백에서 터지면 늦다."""
         missing = [

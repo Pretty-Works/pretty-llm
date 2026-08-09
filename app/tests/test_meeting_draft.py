@@ -10,9 +10,15 @@ from types import SimpleNamespace
 import httpx
 
 from app.api import meeting as draft_api
+from app.config import settings
 from app.main import app
 from app.tools.meeting_tool import meeting_draft_fill
 from app.tools.registry import RunContext
+
+# ★ app/common/auth.py의 verify_internal_api_key — .env에 INTERNAL_API_KEY가
+#   채워진 순간부터 /api/agent/** 가 이 헤더 없인 401을 낸다(BE 흉내). 키가
+#   비어 있으면 auth 쪽이 검증 자체를 건너뛰므로 이 헤더를 늘 보내도 안전하다.
+_AUTH_HEADERS = {"X-Internal-Api-Key": settings.internal_api_key}
 
 
 def _payload():
@@ -38,7 +44,8 @@ async def test_endpoint_sanitizes_llm_output(monkeypatch):
     monkeypatch.setattr(draft_api.llm_client, "structured_call", fake_structured_call)
 
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 headers=_AUTH_HEADERS) as client:
         res = await client.post("/api/agent/meeting-draft", json=_payload())
 
     assert res.status_code == 200
@@ -53,7 +60,8 @@ async def test_endpoint_sanitizes_llm_output(monkeypatch):
 async def test_endpoint_rejects_bad_today():
     bad = _payload() | {"today": "2026/08/07"}
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 headers=_AUTH_HEADERS) as client:
         res = await client.post("/api/agent/meeting-draft", json=bad)
     assert res.status_code == 422
 
