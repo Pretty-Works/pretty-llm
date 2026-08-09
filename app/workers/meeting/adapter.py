@@ -22,7 +22,7 @@ from app.schemas.state import (
 )
 from app.utils.logger import get_logger
 from app.workers.base import WorkerSpec
-from app.workers.meeting import project_fit_agent, schedule_agent
+from app.workers.meeting import project_fit_agent, schedule_agent, tradeoff_agent
 
 log = get_logger("workers.meeting")
 
@@ -80,6 +80,15 @@ async def run_meeting(spec: WorkerSpec, payload: WorkerPayload) -> list[WorkerOu
             fit = await project_fit_agent.run(
                 agent_input.project_id, slots, plan.objective or "회의 일정 조율", http
             )
+            tradeoff = await tradeoff_agent.run(agent_input,scheduled,fit,http,purpose=plan.objective or "회의 일정 조율",)
+
+            tradeoff_output = WorkerOutput(
+                                            dimension="tradeoff",
+                                            domain="meeting",
+                                            result=tradeoff.model_dump(),
+                                            reasoning=tradeoff.reasoning,
+                                            confidence=tradeoff.confidence,)
+            
     except Exception as exc:
         log.warning("meeting 에이전트 실패: %s", exc)
         return [_failed("schedule", str(exc)), _failed("project_fit", str(exc))]
@@ -88,6 +97,7 @@ async def run_meeting(spec: WorkerSpec, payload: WorkerPayload) -> list[WorkerOu
     return [
         scheduled.model_copy(update={"domain": "meeting"}),
         fit.model_copy(update={"domain": "meeting"}),
+        tradeoff_output,
     ]
 
 
