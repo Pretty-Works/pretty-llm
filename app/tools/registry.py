@@ -48,6 +48,10 @@ class RunContext:
     #   fill_form → FILL_FORM(폼 채우기). LLM 은 이 필드를 못 본다 (도구만 쓴다).
     action: dict | None = None
 
+    # 대화 요약 훅(memory)용 내부 필드 — 시작 요청에서 채우고 resume 은 체크포인트
+    # metadata 에서 복원한다. LLM 은 보지 못한다.
+    conversation_id: int | None = None
+    goal: str | None = None
     # 채팅에 첨부된 파일 [{name, content}] — BE 가 텍스트 추출해 runs 바디로 보낸다.
     attachments: list[dict] | None = None
 

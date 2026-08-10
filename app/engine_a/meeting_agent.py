@@ -14,6 +14,7 @@ from app.tools.analyze import analyze_impact
 from app.tools.ask_user import ask_user
 from app.tools.meeting_tool import (meeting_create, meeting_detail,
                                     meeting_draft_fill, meeting_list)
+from app.tools.memory_tool import doc_search, recall
 from app.tools.navigate import navigate
 from app.tools.project_tool import project_members, project_search
 from app.tools.user_tool import user_me
@@ -43,7 +44,8 @@ async def get_agent():
     if _agent is None:
         _agent = build_domain_agent(
             [user_me, project_search, project_members, meeting_list, meeting_detail,
-             meeting_create, analyze_impact, ask_user, navigate],
+             meeting_create, meeting_draft_fill, analyze_impact,
+             recall, doc_search, ask_user, navigate],
             DOMAIN_PROMPT,
             await get_checkpointer(),
             description_prefix="회의록 저장 요청입니다.",

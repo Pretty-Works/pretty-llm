@@ -29,6 +29,14 @@ _INTERNAL_ONLY = [Depends(verify_internal_api_key)]
 async def lifespan(app: FastAPI):
     print(f"[startup] app={settings.app_name} debug={settings.debug}")
     yield
+    # sqlite 커넥션(체크포인트·기억 카드)을 닫는다. aiosqlite 는 커넥션마다
+    # 비데몬 스레드를 띄우므로, 안 닫으면 파이썬이 종료를 못 하고 컨테이너
+    # 중지 때 유예시간을 다 쓴 뒤 강제 종료된다.
+    from app.common.checkpoint import close_checkpointer
+    from app.memory.store import close_memory_store
+
+    await close_checkpointer()
+    await close_memory_store()
     print("[shutdown] cleanup done")
 
 
@@ -52,8 +60,10 @@ app.include_router(router, prefix="/api/v1", dependencies=_INTERNAL_ONLY)
 
 # 에이전트 전용 API (규격 v2, SSE) — /api/v1 과 별개 계약이라 prefix 없이 등록
 from app.api import agent as agent_api  # noqa: E402
+from app.api import docs as docs_api  # noqa: E402
 
 app.include_router(agent_api.router, dependencies=_INTERNAL_ONLY)
+app.include_router(docs_api.router, dependencies=_INTERNAL_ONLY)
 
 # 배치용 탭 요약 생성 API (BE→LLM, 단발 JSON) — 역시 /api/v1 밖 계약이라 prefix 없이 등록
 from app.api.project import agent_router as project_summary_router  # noqa: E402

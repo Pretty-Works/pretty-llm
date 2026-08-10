@@ -103,8 +103,12 @@ async def _run_graph(goal: str, run_id: str,
     if result_model is None:
         raise RuntimeError("그래프가 result 없이 종료됨")
 
-    yield {"type": "result",
-           "answer": _render(result_model),
+    answer = _render(result_model)
+    from app.common.background import fire
+    from app.memory.indexer import index_analysis
+    fire(index_analysis(run_id, goal,
+                        getattr(result_model, "headline", None), answer))
+    yield {"type": "result", "answer": answer,
            "detail": result_model.model_dump(mode="json")}
 
 
@@ -200,6 +204,9 @@ async def _run_baseline(goal: str, run_id: str,
     ])
     answer = (r.content if isinstance(r.content, str) else str(r.content)).strip()
 
+    from app.common.background import fire
+    from app.memory.indexer import index_analysis
+    fire(index_analysis(run_id, goal, None, answer))
     yield {"type": "result", "answer": answer,
            "detail": {"sources": {k: True for k in facts}, "engine": "baseline"}}
 def _sse(event_type: str, payload: dict) -> str:

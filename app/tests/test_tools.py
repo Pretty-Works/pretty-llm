@@ -62,6 +62,14 @@ def test_write_args_all_required() -> None:
             f"{t.name} 에 선택 인자가 있음"
 
 
+# registry 에는 두 종류의 쓰기 경로가 함께 산다:
+#   · LLM 도구(@tool) — 에이전트가 판단해 호출. 승인 게이트 대상 (아래 WRITE 9종)
+#   · 서비스 직접 호출 — 코드가 순서를 통제. engine_b/replan_service.py 가
+#     build_request("replan_save"/"replan_apply") 로 직접 부른다 (담당자 3)
+# 이 검사는 전자만 대상으로 한다.
+SERVICE_ONLY = {"replan_save", "replan_apply"}
+
+
 def test_catalog_coverage() -> None:
     """registry 의 쓰기 명세와 이 파일이 다루는 도구 9종(app/tools/*)의 관계 확인.
 

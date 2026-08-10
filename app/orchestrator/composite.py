@@ -147,7 +147,9 @@ async def stream_composite(run_id: str, ctx: RunContext, plan: dict,
 
     plan["current"] = len(subtasks)                  # 완료 표시
     await save_plan(run_id, plan)
-    yield sse.sse_event("done", {
-        "answer": "\n".join(a for a in plan["answers"] if a),
-        "action": last_action,
-    })
+    final_answer = "\n".join(a for a in plan["answers"] if a)
+    yield sse.sse_event("done", {"answer": final_answer, "action": last_action})
+
+    from app.common.background import fire
+    from app.memory.summarize import summarize_run
+    fire(summarize_run(run_id, ctx.conversation_id, ctx.goal or "", final_answer))
