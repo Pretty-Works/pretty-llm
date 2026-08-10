@@ -65,7 +65,7 @@ async def test_internal_routes_reject_requests_without_valid_key(method, path, b
     from app.config import get_settings
     from app.main import app
 
-    monkeypatch.setenv("INTERNAL_API_KEY", "test-secret-for-auth-wiring")
+    monkeypatch.setenv("INBOUND_API_KEY", "test-secret-for-auth-wiring")
     get_settings.cache_clear()
 
     # raise_app_exceptions=False: 맞는 키를 준 뒤에는 엔드포인트 본연의 로직이
@@ -108,7 +108,7 @@ async def test_passes_when_key_unset(monkeypatch):
     """BE 키 발급 전(임시 상태) — 헤더가 없어도 막지 않는다."""
     from app.config import get_settings
 
-    monkeypatch.setenv("INTERNAL_API_KEY", "")
+    monkeypatch.setenv("INBOUND_API_KEY", "")
     get_settings.cache_clear()
 
     await verify_internal_api_key(x_internal_api_key=None)  # 예외 없이 통과해야 한다
@@ -117,7 +117,7 @@ async def test_passes_when_key_unset(monkeypatch):
 async def test_rejects_missing_or_wrong_key_once_configured(monkeypatch):
     from app.config import get_settings
 
-    monkeypatch.setenv("INTERNAL_API_KEY", "real-be-secret")
+    monkeypatch.setenv("INBOUND_API_KEY", "real-be-secret")
     get_settings.cache_clear()
 
     with pytest.raises(HTTPException) as missing:
@@ -132,7 +132,7 @@ async def test_rejects_missing_or_wrong_key_once_configured(monkeypatch):
 async def test_accepts_matching_key_once_configured(monkeypatch):
     from app.config import get_settings
 
-    monkeypatch.setenv("INTERNAL_API_KEY", "real-be-secret")
+    monkeypatch.setenv("INBOUND_API_KEY", "real-be-secret")
     get_settings.cache_clear()
 
     await verify_internal_api_key(x_internal_api_key="real-be-secret")  # 예외 없이 통과
