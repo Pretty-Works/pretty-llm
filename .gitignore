@@ -10,3 +10,6 @@ data/
 
 # 로컬 작업 문서 (커밋 안 함)
 docs/
+
+# 대화형 진단 콘솔 — 개인 로컬 도구 (uv run python -m app.chat)
+app/chat.py

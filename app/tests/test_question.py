@@ -19,6 +19,7 @@ import uuid
 
 import httpx
 
+from app.config import settings
 from app.main import app
 
 
@@ -53,7 +54,8 @@ async def main() -> None:
 async def _scenarios() -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test",
-                                 timeout=90) as client:
+                                 timeout=90,
+                                 headers={"X-Internal-Api-Key": settings.internal_api_key}) as client:
 
         # ── ① 모호한 goal → question ─────────────────────────
         # 모델이 ask_user 대신 텍스트(done)로 물을 때도 있다 — 그건 A-2 로

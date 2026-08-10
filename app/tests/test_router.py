@@ -19,6 +19,7 @@ import uuid
 
 import httpx
 
+from app.config import settings
 from app.main import app
 
 
@@ -74,7 +75,8 @@ async def _scenarios() -> None:
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test",
-                                 timeout=90) as client:
+                                 timeout=90,
+                                 headers={"X-Internal-Api-Key": settings.internal_api_key}) as client:
 
         # ── ② simple_query — 승인 없이 done ──────────────────
         events = await _collect_sse(client, "/api/agent/runs",

@@ -20,6 +20,7 @@ import uuid
 
 import httpx
 
+from app.config import settings
 from app.main import app
 
 
@@ -89,7 +90,8 @@ async def main() -> None:
 async def _scenarios() -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test",
-                                 timeout=90) as client:
+                                 timeout=90,
+                                 headers={"X-Internal-Api-Key": settings.internal_api_key}) as client:
 
         # ── ① Run 시작 → (question 허용) → approval_request ──
         body = _run_body(GOAL)
