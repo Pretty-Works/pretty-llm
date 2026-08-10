@@ -14,6 +14,7 @@ import uuid
 
 import httpx
 
+from app.config import settings
 from app.main import app
 
 
@@ -74,7 +75,8 @@ async def main() -> None:
 async def _scenarios() -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test",
-                                 timeout=120) as client:
+                                 timeout=120,
+                                 headers={"X-Internal-Api-Key": settings.internal_api_key}) as client:
 
         # ── ① 할일 — 여러 건이 배치 1회 승인으로 ────────────
         body = _body("그룹웨어 프로젝트에 할일 두 개 등록해줘: "

@@ -19,6 +19,7 @@ import uuid
 
 import httpx
 
+from app.config import settings
 from app.main import app
 
 
@@ -96,7 +97,8 @@ async def _scenarios() -> None:
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test",
-                                 timeout=120) as client:
+                                 timeout=120,
+                                 headers={"X-Internal-Api-Key": settings.internal_api_key}) as client:
 
         # ── ② 복합 관통 (연차 신청 + 회의록 확인) ────────────
         body = _body(GOAL_COMPOSITE)

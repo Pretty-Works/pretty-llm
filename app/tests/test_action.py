@@ -20,6 +20,7 @@ import uuid
 
 import httpx
 
+from app.config import settings
 from app.main import app
 
 
@@ -79,7 +80,8 @@ async def main() -> None:
 async def _scenarios() -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test",
-                                 timeout=120) as client:
+                                 timeout=120,
+                                 headers={"X-Internal-Api-Key": settings.internal_api_key}) as client:
 
         # ── ① 저장 → NAVIGATE(MEETING_DETAIL) ────────────────
         body = _body("그룹웨어 AI 고도화 프로젝트에 오늘(2026-08-04) 스프린트 리뷰 "

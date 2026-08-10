@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import types
 import uuid
 
 import httpx
 
+from app.config import settings
 from app.main import app
 
 CONV_ID = int(uuid.uuid4().int % 10**8)      # 테스트 실행마다 새 대화 (DB 잔존 대비)
@@ -48,6 +50,38 @@ async def _collect_sse(client, url, body):
     return events
 
 
+async def _wait_card(namespace, key, before=None, timeout=40):
+    """카드가 생기거나 바뀔 때까지 기다린다.
+
+    ★ 고정 sleep 을 쓰면 안 되는 이유: 요약·색인은 발사 후 망각(background)이라
+      완료 시점이 비결정적이다. 특히 증분 확장은 "기존 요약 + 새 내용" 이라 프롬프트가
+      길어 LLM 호출이 5초를 넘는 일이 잦다(실측 — sleep(5) 로 간헐 실패).
+      폴링이면 빠를 땐 1초에 끝나고 느릴 때만 기다린다.
+    """
+    from app.memory.store import get_card
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        card = await get_card(namespace, key)
+        if card is not None and card.get("summary") != before:
+            return card
+        await asyncio.sleep(1)
+    return await get_card(namespace, key)      # 실패 단언은 호출부가 한다
+
+
+async def _wait_cards(namespace, query, timeout=40):
+    """의미검색 결과가 1건 이상 나올 때까지 기다린다 (분석 카드용)."""
+    from app.memory.store import search_cards
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        hits = await search_cards(namespace, query, limit=3)
+        if hits:
+            return hits
+        await asyncio.sleep(1)
+    return []
+
+
 async def _drive_to_done(client, run_id, events, answer="그룹웨어 AI 고도화, 진행해줘",
                          max_hops=6):
     for _ in range(max_hops):
@@ -65,8 +99,25 @@ async def _drive_to_done(client, run_id, events, answer="그룹웨어 AI 고도�
     raise AssertionError("done 도달 실패")
 
 
+async def _reset_cards() -> None:
+    """이전 실행이 남긴 카드를 지운다.
+
+    ★ 실행마다 conversationId 는 새로 만들지만 **서랍은 ("conv", 5) 로 공유된다.**
+      회차가 쌓이면 "예산 점검 회의" 같은 비슷한 카드가 7장씩 남아, ③ 회상의
+      의미검색(상위 3건)에 이번 실행 카드가 못 들어간다(실측 — 실패 원인).
+    """
+    from app.memory.store import _ns, get_memory_store
+
+    store = await get_memory_store()
+    for namespace in (("conv", 5), ("analyses", 5)):
+        ns = _ns(namespace)
+        for item in await store.asearch(ns, limit=200):
+            await store.adelete(ns, item.key)
+
+
 async def main() -> None:
     try:
+        await _reset_cards()
         await _scenarios()
     finally:
         from app.common.checkpoint import close_checkpointer
@@ -82,7 +133,8 @@ async def _scenarios() -> None:
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://t",
-                                 timeout=180) as client:
+                                 timeout=180,
+                                 headers={"X-Internal-Api-Key": settings.internal_api_key}) as client:
 
         # ── ① 요약 카드 생성 (+ ④ 의 색인 재료를 겸해 회의록 저장 run) ──
         body = _body("그룹웨어 AI 고도화 프로젝트에 오늘 '예산 점검 회의' 회의록 올려줘. "
@@ -91,9 +143,8 @@ async def _scenarios() -> None:
         done = await _drive_to_done(client, body["runId"],
                                     await _collect_sse(client, "/api/agent/runs", body))
         assert "회의록" in done["answer"], done["answer"]
-        await asyncio.sleep(5)                # 백그라운드 요약·색인 완료 대기
 
-        card = await get_card(("conv", 5), str(CONV_ID))
+        card = await _wait_card(("conv", 5), str(CONV_ID))   # 백그라운드 요약 완료 대기
         assert card is not None, "요약 카드가 안 만들어짐"
         assert card["title"] and card["summary"], card
         summary_v1 = card["summary"]
@@ -105,9 +156,9 @@ async def _scenarios() -> None:
         await _drive_to_done(client, body["runId"],
                              await _collect_sse(client, "/api/agent/runs", body),
                              answer="다음 주 화요일 하루, ANNUAL, 사유는 개인 사정")
-        await asyncio.sleep(5)
 
-        card2 = await get_card(("conv", 5), str(CONV_ID))
+        # 같은 카드가 "바뀔 때까지" 기다린다 — 증분 확장은 프롬프트가 길어 더 느리다
+        card2 = await _wait_card(("conv", 5), str(CONV_ID), before=summary_v1)
         assert card2 is not None and card2["summary"] != summary_v1, "증분 확장 안 됨"
         print(f"✅ ② 증분 확장: 카드 1장 유지, 내용 갱신 ({card2['summary'][:60]!r})",
               flush=True)
@@ -134,8 +185,7 @@ async def _scenarios() -> None:
         from app.engine_b.runner import run_engine_b
         async for _ev in run_engine_b("외주비 감액이 일정에 위험한가?", "run_ana_t"):
             pass
-        await asyncio.sleep(2)
-        hits = await search_cards(("analyses", 5), "외주비 감액 위험", limit=3)
+        hits = await _wait_cards(("analyses", 5), "외주비 감액 위험")
         assert hits, "분석 카드가 저장 안 됨"
         print(f"✅ ⑤ 분석 카드: {hits[0].value['title']!r}", flush=True)
 

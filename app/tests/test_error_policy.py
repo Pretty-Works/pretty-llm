@@ -22,6 +22,7 @@ import uuid
 
 import httpx
 
+from app.config import settings
 from app.common.exceptions import (ApprovalRequiredError, BackendUnavailableError,
                                    BackendValidationError, ParamsMismatchError,
                                    WriteRejectedError)
@@ -126,7 +127,8 @@ async def integration_test() -> None:
     try:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t",
-                                     timeout=120) as client:
+                                     timeout=120,
+                                     headers={"X-Internal-Api-Key": settings.internal_api_key}) as client:
 
             async def collect(url, body):
                 events, name = [], None
