@@ -12,8 +12,8 @@ meeting_agent 가 받는다 — 수요일(D)에 채워진다.
 from __future__ import annotations
 
 from app.engine_a import leave_agent, meeting_agent, project_agent
-from app.engine_a.domain_agents import (get_expense_agent, get_schedule_agent,
-                                        get_task_agent)
+from app.engine_a.domain_agents import (get_expense_agent, get_mail_agent,
+                                        get_schedule_agent, get_task_agent)
 
 _FACTORY = {
     "meeting": meeting_agent.get_agent,
@@ -22,6 +22,8 @@ _FACTORY = {
     "task": get_task_agent,
     "schedule": get_schedule_agent,
     "expense": get_expense_agent,
+    "mail": get_mail_agent,                 # gmail_send_email 은 registry의
+                                             # MCP_WRITE_TOOLS 덕에 자동으로 승인 게이트
 }
 
 DEFAULT_DOMAIN = "meeting"

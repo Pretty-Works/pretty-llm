@@ -67,7 +67,10 @@ class Settings(BaseSettings):
     # 워커 1개가 근거 확보를 위해 자율적으로 툴을 호출할 수 있는 최대 횟수
     worker_max_tool_calls: int = 5
     # Validator 위반 시 워커를 다시 돌리는 최대 횟수
-    validator_max_retries: int = 2
+    # (2였으나 실측상 3번째 attempt도 위반을 다 못 고치는 경우가 잦고, replan 은
+    #  시나리오 3개 × 워커 5개가 겹쳐 재시도 1회분만 줄여도 순간 토큰 사용량이
+    #  크게 줄어든다 — TPM 레이트리밋 완화 목적)
+    validator_max_retries: int = 1
     # HITL 에서 사용자가 조정안을 거절하고 재생성을 요청할 수 있는 최대 횟수
     replan_max_retries: int = 5
     # 이 값을 넘으면 과부하로 본다 (1.0 = 정원 100%)

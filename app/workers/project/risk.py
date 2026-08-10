@@ -1,10 +1,18 @@
 # app/workers/project/risk.py
-"""project / risk 워커 — 목표 달성을 막을 구체적 위험."""
+"""project / risk 워커 — 목표 달성을 막을 구체적 위험.
+
+★ gmail 읽기 도구(async_tools=get_gmail_read_tools) — priority 워커와 같은
+이유(app/workers/project/priority.py 참고)로 붙였다. 지연·블로커·외부 의존
+신호는 내부 API 데이터보다 이메일에 먼저 드러나는 경우가 많아서(예: 외주사가
+일정 지연을 메일로 먼저 알리는 경우) risk 축에도 자연스러운 근거원이다.
+읽기 전용만 — get_gmail_read_tools() 가 gmail_send_email 을 애초에 안 돌려주고,
+run_tool_loop() 이 한 번 더 막는다(app/common/llm_client.py 참고)."""
 
 from typing import Literal
 
 from pydantic import Field
 
+from app.clients.gmail_mcp_client import get_gmail_read_tools
 from app.prompts import risk as prompt
 from app.schemas.lenient import LenientModel
 from app.tools.budget_tool import get_project_budget
@@ -48,5 +56,6 @@ SPEC = WorkerSpec(
     method=prompt.METHOD,
     result_model=RiskResult,
     tools=(*PROJECT_TOOLS, get_project_budget, list_user_leaves),
+    async_tools=get_gmail_read_tools,
     context_sections=("project", "todos", "members", "budget", "leaves", "workload"),
 )

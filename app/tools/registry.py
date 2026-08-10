@@ -4,12 +4,25 @@
 여기 한곳에서 정한다:
   ① RunContext   도구가 백엔드를 부를 때 필요한 값 (LLM 이 볼 수 없는 것들)
   ② 승인 등급     auto 모드에서 자동 통과시켜도 되는 도구인가
-  ③ 쓰기 도구 명세  도구 인자 → (method, path, params) 변환
+  ③ 쓰기 도구 명세  도구 인자 → (method, path, params) 변환 (BE 내부 API 도구만)
+  ④ MCP 쓰기 도구  BE 내부 API가 없는 쓰기 도구(gmail_send_email 등)도 같은 승인
+                    게이트를 타게 한다
 
 ★ ③이 중요한 이유
   승인 요청 때 방출한 params 와, 재개 후 실제로 보내는 요청 바디가
   바이트 단위로 같아야 한다(다르면 AGENT_015). 그래서 "도구 인자 → params"
   변환을 이 파일 하나로 모아, 승인 방출 경로와 실행 경로가 같은 함수를 쓰게 한다.
+
+★ ④가 필요한 이유
+  `app/engine_a/domain_agents.py`의 `build_domain_agent()`는 "쓰기 도구는
+  `is_write()`로 자동 판별해 승인 게이트를 건다"는 원칙으로 짜여 있는데, 그
+  `is_write()`가 지금까지는 WRITE_TOOLS(= BE 내부 API로 나가는 도구)만 봤다.
+  gmail_send_email처럼 BE가 아니라 MCP 서버(mcp_servers/gmail_mcp)로 나가는
+  쓰기 도구는 method/path가 없어 WRITE_TOOLS 형식에 안 맞는다 — 그렇다고 그냥
+  두면 gmail 도구가 언젠가 에이전트에 묶이는 순간 승인 없이 자동 실행되는
+  구멍이 조용히 생긴다. MCP_WRITE_TOOLS는 그 구멍을 막는 두 번째 목록이고,
+  `is_write()`가 이 둘을 합쳐서 판정하므로 domain_agents.py 쪽은 수정할
+  필요가 없다("빠뜨리는 사고 원천 차단" 원칙 그대로 유지).
 """
 
 from __future__ import annotations
@@ -50,14 +63,17 @@ AUTO_ALLOWED: frozenset[str] = frozenset({
     "task.create",
     "task.toggleStatus",         # 토글이라 원복
     "milestone.toggleStatus",
-    "replan.save",               # 제안 저장 — 실 데이터 변경 없음
 })
 
 AUTO_FORBIDDEN: frozenset[str] = frozenset({
     "leave.create", "leave.update",          # 승인자에게 알림이 이미 감
     "schedule.create", "schedule.update",    # 참석자 전원에게 알림
     "expense.create",                        # 돈
+    "replan.save",                           # ★ 2026-08-09 BE 스펙 개정 — 저장도 승인 필요.
+                                              #   외부 텍스트를 읽고 만든 계획이 "공식 기록"이
+                                              #   되는 시점이라 사람이 한 번 본다.
     "replan.apply",                          # 배치 반영 + 여러 구성원에게 알림
+    "gmail.send",                            # 상대방에게 실제 메일이 나감 — 되돌릴 수 없음
 })
 
 
@@ -134,25 +150,46 @@ WRITE_TOOLS: dict[str, dict] = {
         "path_params": ("projectId", "milestoneId"),
     },
     "replan_save": {
-        "catalog": "replan.save",           # 제안 저장 — 실 데이터 변경 없음(승인 불필요)
+        "catalog": "replan.save",           # AUTO_FORBIDDEN — 승인 필요(2026-08-09 스펙 개정)
         "method": "POST",
         "path": "/projects/{projectId}/replans",
-        "path_params": ("projectId",),
+        # ★ path_params 를 비워둔다 — projectId 가 경로에도, 바디에도 그대로 들어가야
+        #   한다(승인 토큰이 바디 해시로 봉인되므로, 경로만으로 대상을 정하면 승인 때와
+        #   다른 프로젝트로 보내도 해시가 그대로다). path.format(**args) 는 args 에 있는
+        #   키만 쓰므로 projectId 가 params 에도 남아 있어도 문제없다.
+        "path_params": (),
     },
     "replan_apply": {
         "catalog": "replan.apply",          # AUTO_FORBIDDEN — 저장분에서 꺼내 반영(승인 필요)
         "method": "POST",
         "path": "/projects/{projectId}/replans/{replanId}/apply",
-        "path_params": ("projectId", "replanId"),
+        # ★ 위와 동일한 이유로 projectId·replanId 둘 다 body 에도 남긴다.
+        "path_params": (),
+    },
+}
+
+
+# ─────────────────────────────────────────────────────────────
+# ④ MCP 쓰기 도구 — BE 내부 API가 아니라 MCP 서버(gmail-mcp 등)로 나가는
+#    쓰기 도구. method/path가 없어 WRITE_TOOLS 형식(③)을 못 쓰지만, "auto
+#    모드에서도 사람 승인이 필요하다"는 성격은 BE 쓰기 도구와 같다.
+#    catalog 이름만 따로 매핑해 둔다(승인 카드 표시용, AUTO_FORBIDDEN과 짝).
+# ─────────────────────────────────────────────────────────────
+MCP_WRITE_TOOLS: dict[str, dict] = {
+    "gmail_send_email": {
+        "catalog": "gmail.send",   # AUTO_FORBIDDEN — 상대방에게 실제 메일이 나가는 되돌릴 수 없는 행동
     },
 }
 
 
 def build_request(tool_name: str, args: dict) -> tuple[str, str, dict]:
-    """도구 인자 → (HTTP 메서드, 내부 API 경로, 요청 바디 params).
+    """도구 인자 → (HTTP 메서드, 내부 API 경로, 요청 바디 params). BE 내부 API 도구 전용.
 
     승인 요청을 방출할 때와 실제로 호출할 때 **둘 다 이 함수를 쓴다.**
     한쪽만 다르게 만들면 해시가 어긋나 AGENT_015 가 난다.
+
+    MCP 쓰기 도구(gmail_send_email 등)는 method/path가 없어 여기 못 들어온다 —
+    호출 전에 `is_mcp_write()`로 걸러야 한다(app/common/hitl.py 참고).
     """
     spec = WRITE_TOOLS[tool_name]
     path = spec["path"].format(**args)
@@ -161,11 +198,20 @@ def build_request(tool_name: str, args: dict) -> tuple[str, str, dict]:
 
 
 def is_write(tool_name: str) -> bool:
-    """WRITE 도구인가. approval_request 의 access 필드를 정하는 기준."""
-    return tool_name in WRITE_TOOLS
+    """WRITE 도구인가. approval_request 의 access 필드 + 승인 게이트(interrupt_on)를
+    정하는 기준. BE 내부 API 도구(WRITE_TOOLS)와 MCP 쓰기 도구(MCP_WRITE_TOOLS)
+    둘 다 포함한다 — 어느 쪽이든 사람 승인 없이 자동 실행되면 안 되는 건 같다."""
+    return tool_name in WRITE_TOOLS or tool_name in MCP_WRITE_TOOLS
+
+
+def is_mcp_write(tool_name: str) -> bool:
+    """MCP 서버로 나가는 쓰기 도구인가 — build_request()를 쓸 수 없는 도구.
+    approval 카드를 만드는 쪽(app/common/hitl.py)이 build_request() 대신
+    이 함수로 분기해야 KeyError 없이 승인 카드를 만들 수 있다."""
+    return tool_name in MCP_WRITE_TOOLS
 
 
 def catalog_name(tool_name: str) -> str:
     """LangChain 도구 이름 → 규격 카탈로그 이름 (meeting_create → meeting.create)."""
-    spec = WRITE_TOOLS.get(tool_name)
+    spec = WRITE_TOOLS.get(tool_name) or MCP_WRITE_TOOLS.get(tool_name)
     return spec["catalog"] if spec else tool_name

@@ -11,12 +11,18 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import router
+from app.common.auth import verify_internal_api_key
 from app.config import settings
+
+# BE(스프링)만 이 서버를 부를 수 있어야 하는 라우터 전부에 공통으로 건다 —
+# app/common/auth.py 참고. /health 는 배포/모니터링이 찌르는 엔드포인트라
+# 여기 포함하지 않는다(아래 include_router 들과 별개로 app.get 으로 직접 등록).
+_INTERNAL_ONLY = [Depends(verify_internal_api_key)]
 
 
 @asynccontextmanager
@@ -42,22 +48,22 @@ app.add_middleware(
 )
 
 # 라우터 등록
-app.include_router(router, prefix="/api/v1")
+app.include_router(router, prefix="/api/v1", dependencies=_INTERNAL_ONLY)
 
 # 에이전트 전용 API (규격 v2, SSE) — /api/v1 과 별개 계약이라 prefix 없이 등록
 from app.api import agent as agent_api  # noqa: E402
 
-app.include_router(agent_api.router)
+app.include_router(agent_api.router, dependencies=_INTERNAL_ONLY)
 
 # 배치용 탭 요약 생성 API (BE→LLM, 단발 JSON) — 역시 /api/v1 밖 계약이라 prefix 없이 등록
 from app.api.project import agent_router as project_summary_router  # noqa: E402
 
-app.include_router(project_summary_router)
+app.include_router(project_summary_router, dependencies=_INTERNAL_ONLY)
 
 # 회의록 초안 생성 API (BE→LLM, 단발 JSON) — txt 업로드 → 작성 화면 폼 초안
 from app.api.meeting import agent_router as meeting_draft_router  # noqa: E402
 
-app.include_router(meeting_draft_router)
+app.include_router(meeting_draft_router, dependencies=_INTERNAL_ONLY)
 
 
 # 글로벌 예외 핸들러

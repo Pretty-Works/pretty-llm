@@ -35,7 +35,10 @@ from app.tools.registry import RunContext
 
 # ── 작업 분해 (LLM) ────────────────────────────────────────
 class SubTask(BaseModel):
-    domain: Literal["meeting", "vacation", "project", "task", "schedule", "expense"]
+    # classify.DOMAINS 와 항상 같은 집합이어야 한다 — 여기 안 넣으면 "메일 확인하고
+    # 할일도 추가해줘" 처럼 mail 이 낀 복합 요청은 decompose() 구조화 출력 검증에서
+    # 실패한다(LLM이 domain="mail" 을 고르고 싶어도 스키마가 막음).
+    domain: Literal["meeting", "vacation", "project", "task", "schedule", "expense", "mail"]
     task: str          # 그 도메인 에이전트에게 줄 자립적인 한 문장
 
 

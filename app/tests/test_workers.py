@@ -588,9 +588,12 @@ def test_두_도메인을_고르면_다섯_워커가_돈다():
 
 
 def test_아직_없는_도메인은_조용히_건너뛴다():
-    # vacation 은 담당자 1 몫이라 아직 워커가 없다.
-    assert registry.specs_for_domains(["vacation"]) == []
-    assert registry.unsupported_domains(["project", "vacation"]) == ["vacation"]
+    # vacation 은 이제 워커가 있다(app/workers/vacation/vacation_worker.py —
+    # app/tests/test_vacation_worker.py 참고) — 그래서 "아직 구현 안 된 도메인"
+    # 예시로는 실존하지 않는 이름을 대신 쓴다.
+    assert registry.specs_for_domains(["definitely_not_a_real_domain"]) == []
+    assert registry.unsupported_domains(["project", "definitely_not_a_real_domain"]) == \
+        ["definitely_not_a_real_domain"]
 
 
 def test_meeting_도메인도_라우팅에_잡힌다():

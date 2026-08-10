@@ -11,7 +11,13 @@ import httpx
 
 from app.api import project as summary_api
 from app.api.project import SummaryRequest
+from app.config import settings
 from app.main import app
+
+# ★ app/common/auth.py의 verify_internal_api_key — .env에 INTERNAL_API_KEY가
+#   채워진 순간부터 /api/agent/** 가 이 헤더 없인 401을 낸다(BE 흉내). 키가
+#   비어 있으면 auth 쪽이 검증 자체를 건너뛰므로 이 헤더를 늘 보내도 안전하다.
+_AUTH_HEADERS = {"X-Internal-Api-Key": settings.internal_api_key}
 
 TODAY = date(2026, 8, 6)
 
@@ -109,7 +115,8 @@ async def test_endpoint_returns_four_sections(monkeypatch):
     monkeypatch.setattr(summary_api.llm_client, "structured_call", fake_structured_call)
 
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 headers=_AUTH_HEADERS) as client:
         res = await client.post("/api/agent/project-summary", json=_materials())
 
     assert res.status_code == 200
@@ -126,6 +133,7 @@ async def test_endpoint_returns_four_sections(monkeypatch):
 async def test_endpoint_rejects_bad_today():
     bad = _materials() | {"today": "2026/08/06"}
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 headers=_AUTH_HEADERS) as client:
         res = await client.post("/api/agent/project-summary", json=bad)
     assert res.status_code == 422

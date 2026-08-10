@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 from typing import Any
 
@@ -358,7 +359,48 @@ def _mock_write(path: str, body: bytes) -> Any:
                 "completed": data.get("completed"), "changed": True,
                 "completedAt": "2026-08-05T12:00:00" if data.get("completed") else None,
                 "completionRateAfter": 100 if data.get("completed") else 50}
+    if path.endswith("/replans"):                        # replan.save (제안 저장, ★ 승인 필요)
+        # ★ 2026-08-09 BE 스펙 개정 — replanId 는 정수. apply 때 operations 를 다시
+        #   안 보내므로(BE 가 저장분에서 꺼내 씀), mock 도 저장 내용을 기억해 둬야
+        #   apply 응답의 건수 필드를 그럴듯하게 채울 수 있다.
+        scenarios = data.get("scenarios", [])
+        replan_id = next(_replan_id_seq)
+        _REPLAN_STORE[replan_id] = scenarios
+        return {"replanId": replan_id,
+                "scenarioTypes": [s.get("scenarioType") for s in scenarios]}
+    if "/replans/" in path and path.endswith("/apply"):   # replan.apply (실 반영, 승인 필요)
+        replan_id = _path_int_after(path, "/replans/")
+        scenario_type = data.get("scenarioType")
+        scenarios = _REPLAN_STORE.get(replan_id, [])
+        ops = next((s.get("operations", []) for s in scenarios
+                    if s.get("scenarioType") == scenario_type), [])
+        counts = {"milestoneDateChangedCount": 0, "taskDueDateChangedCount": 0,
+                  "taskCreatedCount": 0, "taskDeletedCount": 0, "memberAddedCount": 0}
+        for op in ops:
+            key = {
+                "MILESTONE_TARGET_DATE_CHANGE": "milestoneDateChangedCount",
+                "TASK_DUE_DATE_CHANGE": "taskDueDateChangedCount",
+                "TASK_CREATE": "taskCreatedCount",
+                "TASK_DELETE": "taskDeletedCount",
+                "PROJECT_MEMBER_ADD": "memberAddedCount",
+            }.get(op.get("operation"))
+            if key:
+                counts[key] += 1
+        return {"applied": True, "scenarioType": scenario_type, **counts}
     return {}
+
+
+def _path_int_after(path: str, marker: str) -> int | None:
+    """"/projects/3/replans/901/apply" 에서 marker="/replans/" 뒤 901 을 뽑는다."""
+    try:
+        return int(path.split(marker, 1)[1].split("/")[0])
+    except (IndexError, ValueError):
+        return None
+
+
+# replan mock 전용 — 저장분을 기억해 apply 때 건수를 계산한다(실제 BE 는 DB 에 저장).
+_replan_id_seq = itertools.count(901)
+_REPLAN_STORE: dict[int, list[dict]] = {}
 
 
 # 앱 전역 단일 인스턴스

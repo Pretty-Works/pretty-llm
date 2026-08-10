@@ -1,10 +1,20 @@
 # app/workers/project/priority.py
-"""project / priority 워커 — 남은 일 중 무엇을 먼저 할 것인가."""
+"""project / priority 워커 — 남은 일 중 무엇을 먼저 할 것인가.
+
+★ gmail 읽기 도구(async_tools=get_gmail_read_tools) — "김대리와의 최근 메일
+반영해서 우선순위 분석해줘" 같은 요청에서, 이 워커가 스스로 판단해 필요하면
+gmail_search_emails/gmail_get_email 로 관련 메일을 찾아 근거로 쓴다. 반드시
+읽기 전용만 — get_gmail_read_tools() 가 gmail_send_email 을 애초에 안 돌려주고,
+run_tool_loop() 이 혹시 몰라 한 번 더 막는다(app/common/llm_client.py 참고).
+실제 메일 발송은 이 워커의 몫이 아니다 — 엔진A의 mail 에이전트가
+analyze_impact 로 이 분석 결과를 받아온 뒤, 승인 게이트가 걸린
+gmail_send_email 로 처리한다."""
 
 from typing import Literal
 
 from pydantic import Field
 
+from app.clients.gmail_mcp_client import get_gmail_read_tools
 from app.prompts import priority as prompt
 from app.schemas.lenient import LenientModel
 from app.tools.project_query import PROJECT_TOOLS
@@ -42,5 +52,6 @@ SPEC = WorkerSpec(
     method=prompt.METHOD,
     result_model=PriorityResult,
     tools=tuple(PROJECT_TOOLS),
+    async_tools=get_gmail_read_tools,
     context_sections=("project", "todos", "members"),
 )
