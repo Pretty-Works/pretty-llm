@@ -94,13 +94,45 @@ async def _run_graph(goal: str, run_id: str) -> AsyncIterator[dict[str, Any]]:
 
 
 def _render(r) -> str:
-    """SynthesisResult → 사용자에게 보일 답변 문장."""
-    parts = [p for p in (r.headline, r.summary) if p]
+    parts = [
+        p for p in (r.headline, r.summary)
+        if p
+    ]
+
+    # ★ 회의 추천 순위
+    if getattr(r, "meeting_ranking", None):
+        lines = ["추천 회의 시간:"]
+
+        for slot in r.meeting_ranking[:3]:
+            rank = slot.get("rank", "?")
+            start = slot.get("start", "")
+            end = slot.get("end", "")
+            available = slot.get("available_count", 0)
+            total = slot.get("total_count", 0)
+            project_fit = slot.get("project_fit", "")
+            reason = slot.get("reason", "")
+
+            lines.append(
+                f"{rank}순위: {start} ~ {end}\n"
+                f"참석 가능: {available}/{total}명\n"
+                f"프로젝트 적합도: {project_fit}\n"
+                f"이유: {reason}"
+            )
+
+        parts.append("\n".join(lines))
+
     if r.residual_risks:
-        parts.append("잔여 위험: " + " / ".join(r.residual_risks[:3]))
+        parts.append(
+            "잔여 위험: "
+            + " / ".join(r.residual_risks[:3])
+        )
+
     if r.proposed_changes:
-        parts.append(f"제안된 변경 {len(r.proposed_changes)}건이 있습니다 — "
-                     "적용을 원하시면 말씀해 주세요.")
+        parts.append(
+            f"제안된 변경 {len(r.proposed_changes)}건이 있습니다 — "
+            "적용을 원하시면 말씀해 주세요."
+        )
+
     return "\n".join(parts) or "분석을 마쳤지만 요약을 만들지 못했습니다."
 
 

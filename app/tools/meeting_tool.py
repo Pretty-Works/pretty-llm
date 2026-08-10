@@ -135,5 +135,52 @@ async def meeting_create(
     return f"회의록 '{title}' 을 저장했습니다. (meetingId={r['meetingId']})"
 
 
+@tool
+async def meeting_draft_fill(projectId: int, runtime: ToolRuntime[RunContext]) -> str:
+    """채팅에 첨부된 txt 회의 기록으로 회의록 초안을 만들어 작성 화면에 채운다 (저장 아님).
+
+    사용자가 파일을 첨부하며 회의록 작성을 요청했을 때 쓴다. 저장하지 않는다 —
+    사용자가 작성 화면에서 검토·수정한 뒤 직접 저장한다.
+    projectId: project_search 로 찾은 프로젝트 ID
+    """
+    ctx = runtime.context
+    attachments = ctx.attachments or []
+    if not attachments:
+        return "첨부된 파일이 없습니다. 회의 기록 txt 파일을 첨부해 달라고 안내하세요."
+    transcript = "\n\n".join(a.get("content", "") for a in attachments)[:30_000]
+
+    # 초안 코어(api/meeting.generate_draft)를 그대로 재사용 — 화면 업로드 경로와 같은 품질
+    from app.api.meeting import generate_draft
+
+    me = await backend.get("/me", run_id=ctx.run_id)
+    members = await backend.get(f"/projects/{projectId}/members", run_id=ctx.run_id)
+    draft = await generate_draft(transcript, me.get("today", ""),
+                                 members.get("members", []))
+
+    # 규격: formData 는 그 화면 저장 API(meeting.create) 요청 바디와 같은 형태
+    ctx.action = {
+        "type": "FILL_FORM",
+        "label": "작성 화면에서 확인하기",
+        "targetScreen": "MEETING_CREATE",
+        "params": {"projectId": projectId},
+        "formData": {
+            "projectId": projectId,
+            "title": draft.title,
+            "meetingDate": draft.meetingDate,
+            "location": draft.location,
+            "attendeeIds": draft.attendeeUserIds,
+            "purpose": draft.purpose,
+            "content": draft.content,
+            "followUp": draft.followUp,
+            "recording": None,
+        },
+    }
+    filled = sum(1 for v in (draft.title, draft.meetingDate, draft.location,
+                             draft.purpose, draft.content, draft.followUp) if v)
+    return (f"첨부 기록으로 초안을 만들었습니다 (채운 항목 {filled}개,"
+            f" 참석자 {len(draft.attendeeUserIds)}명). 작성 화면에 채워 드릴 테니"
+            " 확인 후 저장하시라고 안내하세요.")
+
+
 READ_TOOLS = [meeting_list]
 WRITE_TOOLS = [meeting_create]

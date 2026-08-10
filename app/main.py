@@ -64,6 +64,11 @@ from app.api.project import agent_router as project_summary_router  # noqa: E402
 
 app.include_router(project_summary_router)
 
+# 회의록 초안 생성 API (BE→LLM, 단발 JSON) — txt 업로드 → 작성 화면 폼 초안
+from app.api.meeting import agent_router as meeting_draft_router  # noqa: E402
+
+app.include_router(meeting_draft_router)
+
 
 # 글로벌 예외 핸들러
 @app.exception_handler(Exception)

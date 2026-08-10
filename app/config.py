@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     # 워커 confidence 가 이 값 미만이면 Validator 가 warning 을 붙인다
     low_confidence_threshold: float = 0.45
 
+    # ─── Gmail MCP 연동 ───────────────────────────────────────────
+    #   토큰은 이 프로세스가 절대 안 갖는다. mcp_servers/gmail_mcp/ 가 별도로 들고 있고,
+    #   Agent는 그 서버의 MCP 엔드포인트에 붙어 tool 목록만 받아 쓴다.
+    gmail_mcp_server_url: str = "http://localhost:8100"   # 내부망 URL 권장 (외부 노출 X)
+
     # ─── 기타 ─────────────────────────────────────────────────────
     log_level: str = "INFO"
     # 데모/테스트 재현성을 위해 "오늘"을 고정하고 싶을 때 (YYYY-MM-DD)

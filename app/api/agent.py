@@ -45,11 +45,18 @@ class MessageItem(BaseModel):
     content: str
 
 
+class AttachmentItem(BaseModel):
+    """채팅 파일 첨부 — BE 가 txt 에서 추출한 텍스트. (규격 v2 확장 제안, BE 합의 전 선택 필드)"""
+    name: str = "첨부파일"
+    content: str
+
+
 class RunRequest(BaseModel):
     runId: str           # BE 가 발급. 체크포인트 thread_id 로 그대로 쓴다
     conversationId: int
     goal: str
     messages: list[MessageItem] = Field(default_factory=list)   # 최근 10건
+    attachments: list[AttachmentItem] = Field(default_factory=list)  # 채팅 첨부 (txt 텍스트)
     screenContext: ScreenContext = Field(default_factory=ScreenContext)
     requestSource: str = "WEB"
     locale: str = "ko-KR"
@@ -82,8 +89,9 @@ class ResumeRequest(BaseModel):
 # ── 엔드포인트 ─────────────────────────────────────────────
 @router.post("/runs")
 async def start_run(req: RunRequest) -> StreamingResponse:
-    ctx = RunContext(run_id=req.runId, conversation_id=req.conversationId,
-                     goal=req.goal)
+    ctx = RunContext(run_id=req.runId,
+                     conversation_id=req.conversationId, goal=req.goal,
+                     attachments=[a.model_dump() for a in req.attachments] or None)
     history = [m.model_dump() for m in req.messages]
     decision = await classify(req.goal, req.screenContext.screen, history)
 
@@ -93,6 +101,10 @@ async def start_run(req: RunRequest) -> StreamingResponse:
     if req.screenContext.screen != "HOME" or req.screenContext.formState:
         goal = (f"(현재 화면: {req.screenContext.screen}, "
                 f"입력된 폼 값: {req.screenContext.formState})\n{req.goal}")
+    # 첨부는 본문이 길어 컨텍스트에 싣지 않는다 — 존재만 알리고 도구가 ctx 에서 읽는다.
+    if req.attachments:
+        names = ", ".join(a.name for a in req.attachments)
+        goal += f"\n(첨부 파일 {len(req.attachments)}개: {names} — 내용은 도구가 읽는다)"
 
     if decision.route == "engine_b":
         gen = _engine_b_stream(goal, req.runId)

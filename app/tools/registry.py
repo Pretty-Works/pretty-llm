@@ -39,6 +39,8 @@ class RunContext:
     # metadata 에서 복원한다. LLM 은 보지 못한다.
     conversation_id: int | None = None
     goal: str | None = None
+    # 채팅에 첨부된 파일 [{name, content}] — BE 가 텍스트 추출해 runs 바디로 보낸다.
+    attachments: list[dict] | None = None
 
 
 # ─────────────────────────────────────────────────────────────
