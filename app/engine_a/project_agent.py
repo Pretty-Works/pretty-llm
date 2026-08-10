@@ -14,6 +14,7 @@ from app.engine_a.domain_agents import build_domain_agent
 from app.tools.analyze import analyze_impact
 from app.tools.ask_user import ask_user
 from app.tools.expense_tool import budget_summary
+from app.tools.memory_tool import doc_search, recall
 from app.tools.milestone_tool import milestone_list, milestone_toggle_status
 from app.tools.navigate import fill_form, navigate
 from app.tools.project_tool import project_members, project_search
@@ -42,7 +43,7 @@ async def get_agent():
     if _agent is None:
         _agent = build_domain_agent(
             [user_me, project_search, project_members, milestone_list, budget_summary,
-             milestone_toggle_status, analyze_impact, fill_form, ask_user, navigate],
+             milestone_toggle_status, analyze_impact, recall, doc_search, fill_form, ask_user, navigate],
             DOMAIN_PROMPT,
             await get_checkpointer(),
             description_prefix="마일스톤 상태 변경 요청입니다.",

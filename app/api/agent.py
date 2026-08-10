@@ -82,7 +82,8 @@ class ResumeRequest(BaseModel):
 # ── 엔드포인트 ─────────────────────────────────────────────
 @router.post("/runs")
 async def start_run(req: RunRequest) -> StreamingResponse:
-    ctx = RunContext(run_id=req.runId)
+    ctx = RunContext(run_id=req.runId, conversation_id=req.conversationId,
+                     goal=req.goal)
     history = [m.model_dump() for m in req.messages]
     decision = await classify(req.goal, req.screenContext.screen, history)
 
@@ -107,7 +108,10 @@ async def start_run(req: RunRequest) -> StreamingResponse:
                     if len(domains) > 1 else [])
 
         if len(subtasks) > 1:                        # 복합 — 릴레이 실행
-            plan = {"subtasks": subtasks, "current": 0, "answers": []}
+            # conversationId·goal 도 계획에 실어둔다 — 복합은 체크포인트 metadata 가
+            # 하위 스레드에만 있어, resume 때 요약 훅이 쓸 값을 여기서 복원한다.
+            plan = {"subtasks": subtasks, "current": 0, "answers": [],
+                    "conversationId": req.conversationId, "goal": req.goal}
             await composite.save_plan(req.runId, plan)
             gen = composite.stream_composite(req.runId, ctx, plan)
         else:                                        # 단독 — 도메인 에이전트 직행
@@ -131,6 +135,8 @@ async def resume_run(run_id: str, req: ResumeRequest) -> StreamingResponse:
     # ── 복합 실행이었나 — 계획 테이블이 기억한다 ──────────
     plan = await composite.load_plan(run_id)
     if plan and plan["current"] < len(plan["subtasks"]):
+        ctx.conversation_id = plan.get("conversationId")   # 요약 훅용 — 단독 경로의
+        ctx.goal = plan.get("goal")                        # metadata 복원과 같은 역할
         k = plan["current"]
         st = plan["subtasks"][k]
         agent = await agent_for_domain(st["domain"])
@@ -150,6 +156,8 @@ async def resume_run(run_id: str, req: ResumeRequest) -> StreamingResponse:
     meta = tup.metadata or {}
     route = meta.get("route", "engine_a")
     domain = meta.get("domain", "meeting")
+    ctx.conversation_id = meta.get("conversationId")
+    ctx.goal = meta.get("goal")
 
     agent = (await simple_query.get_agent() if route == "simple_query"
              else await agent_for_domain(domain))

@@ -119,6 +119,12 @@ async def meeting_create(
     except WriteRejectedError as e:
         return str(e)
 
+    # 회의록 본문 색인 — 발사 후 망각 (내용 검색 RAG 용)
+    from app.common.background import fire
+    from app.memory.indexer import index_meeting
+    fire(index_meeting(ctx.run_id, projectId, r["meetingId"], title,
+                       meetingDate, purpose, content, followUp))
+
     # 저장 결과 화면으로 안내 — done.action 에 실린다 (규격 예시 그대로)
     ctx.action = {
         "type": "NAVIGATE",

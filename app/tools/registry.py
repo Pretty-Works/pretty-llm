@@ -35,6 +35,11 @@ class RunContext:
     #   fill_form → FILL_FORM(폼 채우기). LLM 은 이 필드를 못 본다 (도구만 쓴다).
     action: dict | None = None
 
+    # 대화 요약 훅(memory)용 내부 필드 — 시작 요청에서 채우고 resume 은 체크포인트
+    # metadata 에서 복원한다. LLM 은 보지 못한다.
+    conversation_id: int | None = None
+    goal: str | None = None
+
 
 # ─────────────────────────────────────────────────────────────
 # ② 승인 등급 — auto 모드 정책

@@ -20,6 +20,7 @@ from app.config import settings
 from app.tools.expense_tool import budget_summary, expense_list
 from app.tools.leave_tool import leave_balance, leave_list
 from app.tools.meeting_tool import meeting_detail, meeting_list
+from app.tools.memory_tool import doc_search, recall
 from app.tools.milestone_tool import milestone_list
 from app.tools.project_tool import project_members, project_search
 from app.tools.registry import RunContext
@@ -40,7 +41,7 @@ SYSTEM_PROMPT = """당신은 그룹웨어의 조회 담당 에이전트입니다
 # 조회 13종 전부 — 쓰기 도구가 하나도 없으므로 승인 게이트 자체가 불필요
 READ_TOOLS = [user_me, user_search, project_search, project_members, milestone_list,
               task_list, meeting_list, meeting_detail, budget_summary, expense_list,
-              schedule_list, leave_balance, leave_list]
+              schedule_list, leave_balance, leave_list, recall, doc_search]
 
 
 def build_simple_agent():

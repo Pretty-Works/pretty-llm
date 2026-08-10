@@ -172,7 +172,9 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
     완료는 done 이벤트가 아니라 sink 로 알리고, done 은 마지막에 한 번만.
     """
     config = {"configurable": {"thread_id": run_id},
-              "metadata": {"route": route, "domain": domain}}
+              "metadata": {"route": route, "domain": domain,
+                           "conversationId": ctx.conversation_id,
+                           "goal": (ctx.goal or "")[:500]}}
     tool_call_ids: dict[str, str] = {}      # 도구 이름 → tool_call id (interrupt 대조용)
     seen_calls: set[str] = set()            # 미들웨어가 같은 메시지를 재방출하므로 중복 제거
     final_text = ""
@@ -225,6 +227,11 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
         result_sink["completed"] = True
     if emit_done:
         yield sse.sse_event("done", {"answer": final_text, "action": ctx.action})
+        # 대화 요약 카드 갱신 — 발사 후 망각 (응답 지연 0, 실패는 로그만)
+        from app.common.background import fire
+        from app.memory.summarize import summarize_run
+        fire(summarize_run(ctx.run_id, ctx.conversation_id,
+                           ctx.goal or "", final_text))
 
 
 def _approval_payload(interrupts, tool_call_ids: dict[str, str]) -> dict:

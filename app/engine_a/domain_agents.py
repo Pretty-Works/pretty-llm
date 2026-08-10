@@ -17,6 +17,7 @@ from app.common.checkpoint import get_checkpointer
 from app.config import settings
 from app.engine_a.prompt_rules import COMMON_RULES
 from app.tools.analyze import analyze_impact
+from app.tools.memory_tool import doc_search, recall
 from app.tools.ask_user import ask_user
 from app.tools.expense_tool import budget_summary, expense_create, expense_list
 from app.tools.navigate import navigate
@@ -109,17 +110,17 @@ async def _get(key: str, tools: list, prompt: str, prefix: str):
 
 async def get_task_agent():
     return await _get("task", [user_me, project_search, task_list, task_create,
-                               task_toggle_status, analyze_impact, ask_user, navigate], TASK_PROMPT,
+                               task_toggle_status, analyze_impact, recall, doc_search, ask_user, navigate], TASK_PROMPT,
                       "할일 등록/변경 요청입니다.")
 
 
 async def get_schedule_agent():
     return await _get("schedule", [user_me, user_search, project_members, schedule_list,
-                                   schedule_create, schedule_update, analyze_impact, ask_user, navigate],
+                                   schedule_create, schedule_update, analyze_impact, recall, doc_search, ask_user, navigate],
                       SCHEDULE_PROMPT, "일정 등록/변경 요청입니다.")
 
 
 async def get_expense_agent():
     return await _get("expense", [user_me, project_search, budget_summary, expense_list,
-                                  expense_create, analyze_impact, ask_user, navigate], EXPENSE_PROMPT,
+                                  expense_create, analyze_impact, recall, doc_search, ask_user, navigate], EXPENSE_PROMPT,
                       "지출 등록 요청입니다.")

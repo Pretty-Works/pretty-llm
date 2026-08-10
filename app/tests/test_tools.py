@@ -62,11 +62,20 @@ def test_write_args_all_required() -> None:
             f"{t.name} 에 선택 인자가 있음"
 
 
+# registry 에는 두 종류의 쓰기 경로가 함께 산다:
+#   · LLM 도구(@tool) — 에이전트가 판단해 호출. 승인 게이트 대상 (아래 WRITE 9종)
+#   · 서비스 직접 호출 — 코드가 순서를 통제. engine_b/replan_service.py 가
+#     build_request("replan_save"/"replan_apply") 로 직접 부른다 (담당자 3)
+# 이 검사는 전자만 대상으로 한다.
+SERVICE_ONLY = {"replan_save", "replan_apply"}
+
+
 def test_catalog_coverage() -> None:
-    """registry 의 쓰기 명세 9종과 도구가 1:1 인가 + 이름 매핑 확인."""
-    assert len(WRITE_TOOLS) == 9, f"registry 쓰기 명세 {len(WRITE_TOOLS)}개 (기대 9)"
+    """registry 의 LLM 쓰기 명세 9종과 도구가 1:1 인가 + 이름 매핑 확인."""
+    llm_write = set(WRITE_TOOLS) - SERVICE_ONLY
+    assert len(llm_write) == 9, f"registry LLM 쓰기 명세 {len(llm_write)}개 (기대 9)"
     tool_names = {t.name for t in WRITE}
-    assert tool_names == set(WRITE_TOOLS), f"불일치: {tool_names ^ set(WRITE_TOOLS)}"
+    assert tool_names == llm_write, f"불일치: {tool_names ^ llm_write}"
     assert catalog_name("meeting_create") == "meeting.create"
     assert catalog_name("milestone_toggle_status") == "milestone.toggleStatus"
     assert is_write("leave_update") and not is_write("leave_balance")

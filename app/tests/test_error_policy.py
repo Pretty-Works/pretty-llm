@@ -171,8 +171,12 @@ async def main() -> None:
         await unit_tests()
         await integration_test()
     finally:
+        # done 훅이 기억 카드용 스토어도 열므로 그쪽도 닫아야 프로세스가 끝난다
         from app.common.checkpoint import close_checkpointer
+        from app.memory.store import close_memory_store
+        await asyncio.sleep(1)          # 발사 후 망각 태스크 잔여분 소화
         await close_checkpointer()
+        await close_memory_store()
     print("\n실패 정책 전부 통과", flush=True)
 
 
