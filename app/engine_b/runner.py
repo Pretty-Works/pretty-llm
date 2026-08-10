@@ -2,7 +2,7 @@
 """Engine B 실행기 — 에이전트 파이프라인 계약 + 멀티에이전트 그래프 (병합: 2026-08-06)
 
 계약 (호출자: ① api/agent.py 직행 ② tools/analyze.py 의 analyze_impact):
-    async for ev in run_engine_b(goal, run_id):
+    async for ev in run_engine_b(goal, run_id, history=history):
         ev == {"type": "progress", "text": "사용자에게 보일 한국어 한 줄"}   # 여러 번
         ev == {"type": "result", "answer": "분석 요약", "detail": {...}}      # 마지막 1회
 
@@ -14,6 +14,18 @@
 
 신원: 그래프 입력(AnalysisRequest)이 user_id 를 요구하므로 user.me(X-Run-Id
 역산)로 조회해 채운다. FastAPI 는 userId 를 직접 받지 않는다 (규격).
+
+★ history — simple_query/engine_a/replan은 전부 hitl.stream_run(agent, goal,
+  history, ...)으로 직전 대화(messages)를 넘기는데, 이 "순수 분석"(mode=analysis)
+  경로만 여태 goal 텍스트 하나만 받고 history를 아예 안 받았다. "아까 그 분석 이어서
+  X도 봐줘"처럼 직전 대화를 참조해야 하는 요청이 여기서는 매번 백지 상태로
+  시작됐다는 뜻 — 이번에 고쳤다. AnalysisRequest에 이미 chat_history 필드가 있고
+  analysis_router.py의 _render_user()도 이미 그걸 프롬프트에 넣게 짜여 있었다
+  (engine_b.analysis_router.run()/to_analysis_request()가 쓰던 것과 동일한 필드) —
+  즉 라우터 쪽은 처음부터 준비돼 있었는데 이 파일이 그 필드를 안 채워서 안 쓰이고
+  있었을 뿐이다. history는 하위 호환을 위해 기본값 None으로 둔다 — analyze_impact
+  (도메인 에이전트가 이미 완결된 한 문장으로 question을 만들어 넘기는 경로)는
+  history가 따로 필요 없어 그대로 안 넘겨도 된다.
 """
 
 from __future__ import annotations
@@ -44,12 +56,16 @@ def _graph():
     return build_engine_b_graph()
 
 
-async def run_engine_b(goal: str, run_id: str,
-                       screen: str = "HOME") -> AsyncIterator[dict[str, Any]]:
-    """심층 분석 실행. progress 여러 번 → result 1회. 그래프 실패 시 기본 분석 폴백."""
+async def run_engine_b(goal: str, run_id: str, screen: str = "HOME",
+                       history: list[dict] | None = None) -> AsyncIterator[dict[str, Any]]:
+    """심층 분석 실행. progress 여러 번 → result 1회. 그래프 실패 시 기본 분석 폴백.
+
+    history: [{"role": "USER"|"AGENT", "content": str}, ...] — api/agent.py의
+    RunRequest.messages를 그대로 넘겨받은 것과 같은 모양(다른 라우트들과 동일).
+    """
     current_run_id.set(run_id)   # 그래프 안 조회 도구들이 X-Run-Id 로 쓴다
     try:
-        async for ev in _run_graph(goal, run_id):
+        async for ev in _run_graph(goal, run_id, history):
             yield ev
         return
     except Exception as exc:                     # noqa: BLE001 — 데모 연속성 우선
@@ -58,19 +74,22 @@ async def run_engine_b(goal: str, run_id: str,
         # (원인은 서버 로그로) — print 는 uvicorn 로그에 남는다
         print(f"[engine_b] 그래프 실패, 기본 분석 폴백: {type(exc).__name__}: {exc}")
 
-    async for ev in _run_baseline(goal, run_id):
+    async for ev in _run_baseline(goal, run_id, history):
         yield ev
 
 
 # ─────────────────────────────────────────────────────────────
 # 1차 — 담당자 3의 멀티에이전트 그래프
 # ─────────────────────────────────────────────────────────────
-async def _run_graph(goal: str, run_id: str) -> AsyncIterator[dict[str, Any]]:
+async def _run_graph(goal: str, run_id: str,
+                     history: list[dict] | None = None) -> AsyncIterator[dict[str, Any]]:
     from app.schemas.state import AnalysisRequest
 
     # 그래프는 user_id 를 요구한다 — X-Run-Id 역산(user.me)으로 채운다
     me = await backend.get("/me", run_id=run_id)
-    request = AnalysisRequest(query=goal, user_id=me["userId"])
+    # chat_history는 analysis_router._render_user()가 이미 "[직전 대화]" 블록으로
+    # 프롬프트에 넣게 짜여 있었다 — 여기서 채워주기만 하면 된다.
+    request = AnalysisRequest(query=goal, user_id=me["userId"], chat_history=history or [])
     initial = {"request": request, "worker_outputs": [], "trace": []}
 
     result_model = None
@@ -154,7 +173,16 @@ def _get_llm():
     return _llm
 
 
-async def _run_baseline(goal: str, run_id: str) -> AsyncIterator[dict[str, Any]]:
+def _format_history(history: list[dict] | None) -> str:
+    """classify.py의 같은 용도 코드와 동일한 모양 — 최근 4턴만, 프롬프트에 붙일 텍스트로."""
+    if not history:
+        return ""
+    recent = "\n".join(f"{m.get('role', 'user')}: {m.get('content', '')}" for m in history[-4:])
+    return f"이전 대화:\n{recent}\n\n"
+
+
+async def _run_baseline(goal: str, run_id: str,
+                        history: list[dict] | None = None) -> AsyncIterator[dict[str, Any]]:
     yield {"type": "progress", "text": "분석할 데이터를 모으고 있어요"}
 
     facts: dict[str, Any] = {}
@@ -171,7 +199,7 @@ async def _run_baseline(goal: str, run_id: str) -> AsyncIterator[dict[str, Any]]
     yield {"type": "progress", "text": "수집한 근거를 종합해 분석하고 있어요"}
     r = await _get_llm().ainvoke([
         {"role": "system", "content": _SYNTH_PROMPT},
-        {"role": "user", "content": f"질문: {goal}\n\n실데이터:\n"
+        {"role": "user", "content": f"{_format_history(history)}질문: {goal}\n\n실데이터:\n"
                                     f"{json.dumps(facts, ensure_ascii=False, default=str)[:6000]}"},
     ])
     answer = (r.content if isinstance(r.content, str) else str(r.content)).strip()

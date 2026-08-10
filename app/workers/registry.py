@@ -14,12 +14,13 @@ from app.workers.base import WorkerSpec
 from app.workers.hr import skill_fit, workload
 from app.workers.meeting import adapter as meeting_adapter
 from app.workers.project import cost, priority, risk
+from app.workers.vacation import vacation_worker
 
 _REGISTRY: dict[str, list[WorkerSpec]] = {
     "project": [priority.SPEC, risk.SPEC, cost.SPEC],
     "hcm": [skill_fit.SPEC, workload.SPEC],
     "meeting": [meeting_adapter.SPEC],
-    # "vacation": [...],  # 담당자 1 (Engine A 에서 위험 신호 시 넘어오는 경로)
+    "vacation": [vacation_worker.SPEC],
 }
 
 

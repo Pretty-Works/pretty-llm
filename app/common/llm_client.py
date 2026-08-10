@@ -170,7 +170,24 @@ async def run_tool_loop(
     LLM 이 더 이상 툴을 부르지 않거나 `max_tool_calls` 에 도달하면 종료한다.
     반환된 messages 를 그대로 이어 붙여 structured_call 로 최종 답을 뽑는 방식이다.
     (툴 호출과 구조화 출력을 한 번에 강제하면 모델이 툴을 건너뛰는 경향이 있어 2단계로 나눴다.)
+
+    ★ 여기 들어오는 도구는 승인(HITL) 게이트가 없다 — LLM이 부르면 그 즉시
+    실행된다(engine_a의 build_domain_agent()가 쓰는 HumanInTheLoopMiddleware와
+    다르다). registry.is_write() 가 True 인 쓰기 도구가 하나라도 섞여 들어오면
+    여기서 바로 거부한다 — 호출자(예: 워커의 async_tools)가 필터링을 깜빡했을
+    때의 백스톱이다. 1차 방어는 도구를 만드는 쪽(예: gmail_mcp_client의
+    get_gmail_read_tools())이 화이트리스트로 거르는 것이고, 이건 그게 뚫렸을
+    때의 2차 방어선이다.
     """
+    from app.tools.registry import is_write
+
+    unsafe = [t.name for t in tools if is_write(t.name)]
+    if unsafe:
+        raise RuntimeError(
+            f"run_tool_loop 에 승인 게이트 없는 쓰기 도구가 섞여 들어옴: {unsafe} "
+            "— 이 루프는 도구를 부르는 즉시 실행하므로 쓰기 도구를 넣으면 안 된다."
+        )
+
     settings = get_settings()
     budget = settings.worker_max_tool_calls if max_tool_calls is None else max_tool_calls
 

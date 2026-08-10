@@ -79,15 +79,22 @@ async def refresh_access_token(refresh_token: str) -> dict:
     return resp.json()
 
 
-async def fetch_google_email(access_token: str) -> str:
-    """저장 레코드에 어떤 구글 계정인지 표시해 두기 위한 부가 조회 (필수 아님)."""
+async def fetch_google_identity(access_token: str) -> dict:
+    """저장 레코드에 "어느 구글 계정인지"를 남겨두기 위한 부가 조회 (필수 아님).
+
+    email 뿐 아니라 sub(그 구글 계정의 불변 고유 ID)도 같은 호출로 같이 받는다.
+    email은 사용자가 나중에 바꿀 수 있어 "이게 계속 같은 구글 계정인가"를 오래
+    신뢰하기엔 약하고, sub가 진짜 안정적인 식별자다(OpenID Connect 표준 클레임).
+    실패해도 연결 자체는 계속 진행해야 하므로 예외를 던지지 않고 빈 값으로 채운다.
+    """
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(
             _USERINFO_ENDPOINT,
             headers={"Authorization": f"Bearer {access_token}"},
         )
     resp.raise_for_status()
-    return resp.json().get("email", "")
+    data = resp.json()
+    return {"sub": data.get("sub", ""), "email": data.get("email", "")}
 
 
 def expiry_epoch(expires_in: int) -> float:

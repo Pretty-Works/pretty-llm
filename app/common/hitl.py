@@ -92,7 +92,8 @@ def _shape(result: dict, thread_id: str) -> dict:
 from collections.abc import AsyncIterator
 
 from app.common import sse
-from app.tools.registry import WRITE_TOOLS, RunContext, build_request, catalog_name
+from app.common.run_context import current_run_id
+from app.tools.registry import WRITE_TOOLS, RunContext, build_request, catalog_name, is_mcp_write
 
 # 도구 이름 → 사용자에게 보여줄 진행 문구 (step.text 는 FE 에 그대로 노출됨)
 _STEP_TEXT = {
@@ -179,6 +180,14 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
     seen_calls: set[str] = set()            # 미들웨어가 같은 메시지를 재방출하므로 중복 제거
     final_text = ""
 
+    # gmail_mcp_client._lock_run_id() 가 감싼 도구들은 RunContext(context=ctx)가
+    # 아니라 이 contextvar 로 run_id 를 읽는다(engine_b/runner.py 와 동일 패턴).
+    # 여기서 안 하면 gmail 도구는 항상 current_run_id.get() == None 을 보고
+    # {"connected": False, "error": "no_active_run"} 만 돌려주게 된다 — 즉 도메인
+    # 에이전트에 gmail 도구를 섞는 순간부터는 반드시 필요한 한 줄이다. resume
+    # 세그먼트(stream_command)도 같은 _drive() 를 타므로 여기 한 곳이면 충분하다.
+    current_run_id.set(run_id)
+
     # "custom" 을 같이 구독하는 이유: 오래 걸리는 도구(analyze_impact 의 엔진 B)가
     # 실행 도중 runtime.stream_writer 로 밀어 넣는 진행상황을 step 으로 중계해야
     # 90초 무이벤트 차단(규격)에 안 걸린다.
@@ -241,9 +250,18 @@ def _approval_payload(interrupts, tool_call_ids: dict[str, str]) -> dict:
     tool_name = req.get("action") or req.get("name", "")
     args = req.get("args", {})
 
-    # ★ 실행 경로(meeting_tool)와 같은 build_request 를 쓴다.
-    #   여기서 방출한 params 와 실행 시 보낼 바디가 항상 같아야 한다 (AGENT_015).
-    _method, _path, params = build_request(tool_name, args)
+    if is_mcp_write(tool_name):
+        # gmail_send_email 같은 MCP 쓰기 도구 — BE 내부 API 경로가 없어
+        # build_request()를 못 쓴다(WRITE_TOOLS[tool_name] KeyError 남). 이 도구들은
+        # execute_write()/AGENT_015 해시 재검증 경로를 아예 안 타므로(실행이 BE가
+        # 아니라 MCP 서버로 직접 나감), 승인 카드 표시용으로 LLM이 준 args를
+        # 그대로 params 로 쓰면 된다 — "방출한 params == 실행 바디"를 맞출 대상
+        # 자체가 없다.
+        params = args
+    else:
+        # ★ 실행 경로(meeting_tool)와 같은 build_request 를 쓴다.
+        #   여기서 방출한 params 와 실행 시 보낼 바디가 항상 같아야 한다 (AGENT_015).
+        _method, _path, params = build_request(tool_name, args)
 
     # summary: 미들웨어 description(요청별 → 전체 순) → 없으면 기본 문구. 60자 제한
     desc = req.get("description") or (value.get("description") if isinstance(value, dict) else "")

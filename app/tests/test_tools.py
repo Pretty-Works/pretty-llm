@@ -71,11 +71,18 @@ SERVICE_ONLY = {"replan_save", "replan_apply"}
 
 
 def test_catalog_coverage() -> None:
-    """registry 의 LLM 쓰기 명세 9종과 도구가 1:1 인가 + 이름 매핑 확인."""
-    llm_write = set(WRITE_TOOLS) - SERVICE_ONLY
-    assert len(llm_write) == 9, f"registry LLM 쓰기 명세 {len(llm_write)}개 (기대 9)"
+    """registry 의 쓰기 명세와 이 파일이 다루는 도구 9종(app/tools/*)의 관계 확인.
+
+    ★ registry.WRITE_TOOLS는 app/tools/* 뿐 아니라 엔진B의 replan_save/
+    replan_apply(app/engine_b/replan_tools.py)도 담고 있다 — 승인 시점/실행
+    시점 바이트가 같아야 한다는 build_request() 규칙이 두 엔진 다 필요해서
+    registry 하나로 모았기 때문이다(모듈 docstring 참고). 그 둘은 이 파일이
+    import 하지 않으므로(엔진B 쪽에서 따로 검증할 몫) 1:1이 아니라 "이 파일의
+    9종은 전부 registry에 있고, registry의 나머지는 replan 2종뿐"으로 확인한다."""
     tool_names = {t.name for t in WRITE}
-    assert tool_names == llm_write, f"불일치: {tool_names ^ llm_write}"
+    assert tool_names <= set(WRITE_TOOLS), f"registry에 없는 도구: {tool_names - set(WRITE_TOOLS)}"
+    extra = set(WRITE_TOOLS) - tool_names
+    assert extra == {"replan_save", "replan_apply"}, f"예상 밖 registry 항목: {extra}"
     assert catalog_name("meeting_create") == "meeting.create"
     assert catalog_name("milestone_toggle_status") == "milestone.toggleStatus"
     assert is_write("leave_update") and not is_write("leave_balance")

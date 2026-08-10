@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from app.config import settings
 
 ROUTES = ("simple_query", "engine_a", "engine_b")
-DOMAINS = ("meeting", "vacation", "project", "task", "schedule", "expense")
+DOMAINS = ("meeting", "vacation", "project", "task", "schedule", "expense", "mail")
 
 
 class RouteDecision(BaseModel):
@@ -29,7 +29,7 @@ class RouteDecision(BaseModel):
     # 요청이 건드리는 도메인 전부. 주 도메인을 맨 앞에 — engine_a 에서
     # 1개면 그 도메인 에이전트로 직행, 2개 이상이면 복합 실행기로 간다.
     domains: list[Literal["meeting", "vacation", "project",
-                          "task", "schedule", "expense"]] = []
+                          "task", "schedule", "expense", "mail"]] = []
 
 
 _RULES = """당신은 그룹웨어 에이전트의 접수처입니다. 사용자 요청을 분류하세요.
@@ -40,6 +40,12 @@ simple_query — 현재 상태를 묻는 단순 조회.
 
 engine_a — 무언가를 만들거나·기록하거나·신청하는 실행 요청. 삭제·수정 안내 요청도 포함.
   예: "회의록 올려줘", "다음주 화요일 연차 신청해줘", "프로젝트 만들고 싶어", "지난주 회의록 삭제해줘"
+
+⚠️ 메일(Gmail) 관련 요청은 조회든 발송이든 항상 engine_a 다 — "최근 메일 5건 보여줘"
+   같은 조회 문장도 simple_query 로 보내지 마라. simple_query 에이전트는 그룹웨어
+   내부 데이터만 조회하고 Gmail 도구가 아예 없어서, mail 을 그리로 보내면 응답을
+   못 만든다. mail 관련 문장은 무조건 engine_a + domains에 "mail" 포함.
+   예: "내 최근 메일 확인해줘", "OO한테 회의 일정 메일로 보내줘", "미확인 메일 있어?"
 
 engine_b — 판단이 필요한 깊은 분석·비교·시뮬레이션·재계획. **분석 결과 자체가 최종 답일 때만.**
   예: "일정이 밀렸는데 어떻게 조정할지 시나리오 분석해줘", "이 프로젝트 리스크 분석해줘",
@@ -55,6 +61,7 @@ engine_b — 판단이 필요한 깊은 분석·비교·시뮬레이션·재계�
 ## domains — 요청이 건드리는 도메인 전부 (빠뜨리지 말 것)
 meeting(회의록 — **이미 한 회의의 기록**) · vacation(연차·휴가) · project(프로젝트 자체)
 task(할일·업무) · schedule(일정·캘린더 — **앞으로의 약속·미팅 잡기**) · expense(경비·비용)
+mail(Gmail 메일 검색·조회·발송 — 그룹웨어 내부가 아니라 외부 이메일 계정)
 
 ⚠️ 회의 관련은 시제로 가른다:
   "어제 회의 회의록 써줘" → meeting (지난 회의의 기록)

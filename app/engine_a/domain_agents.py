@@ -1,11 +1,19 @@
 """
-도메인 에이전트 공장 + 신규 도메인 3종 (할일 · 일정 · 지출)
+도메인 에이전트 공장 + 신규 도메인 4종 (할일 · 일정 · 지출 · 메일)
 
 "승인 에이전트 패밀리" 원칙(8/4 합의): 뼈대(create_agent + HITL 미들웨어 +
 RunContext)는 전부 같고, 메뉴판(도구)과 도메인 프롬프트만 다르다.
 그 뼈대를 build_domain_agent() 하나로 묶었다 — 쓰기 도구는 registry 의
 is_write() 로 자동 판별해 승인 게이트를 건다. 도구를 추가하면 게이트 설정을
-따로 만질 필요가 없다 (빠뜨리는 사고 원천 차단).
+따로 만질 필요가 없다 (빠뜨리는 사고 원천 차단). gmail_send_email 도 registry의
+MCP_WRITE_TOOLS 덕에 is_write() 가 True 를 돌려주므로 여기서 별도 처리가 없다.
+
+★ 메일(mail) 도메인만 다른 점 — 도구를 async 로 가져와야 한다.
+  다른 도메인 도구는 전부 이 프로세스 안의 평범한 함수라 import 시점에 바로 쓸 수
+  있지만, gmail 도구는 gmail-mcp 서버에 네트워크로 물어봐야 나온다
+  (app/clients/gmail_mcp_client.py 의 get_gmail_tools(), MCP 서버가 꺼져 있으면
+  빈 목록으로 폴백). 그래서 get_mail_agent() 는 다른 get_*_agent() 들처럼 정적
+  목록을 넘기는 _get() 을 못 쓰고 직접 풀어서 짠다 — 아래 참고.
 """
 
 from __future__ import annotations
@@ -13,6 +21,7 @@ from __future__ import annotations
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 
+from app.clients.gmail_mcp_client import get_gmail_tools
 from app.common.checkpoint import get_checkpointer
 from app.config import settings
 from app.engine_a.prompt_rules import COMMON_RULES
@@ -97,6 +106,22 @@ EXPENSE_PROMPT = """당신은 그룹웨어의 지출·예산 담당 에이전트
   넘으면 답변에 알려라.
 - "제일 큰 지출" 질문은 expense_list 의 sort=AMOUNT_DESC 를 쓴다."""
 
+# ── 메일 에이전트 ──────────────────────────────────────────
+MAIL_PROMPT = """당신은 그룹웨어의 메일(Gmail) 담당 에이전트입니다.
+
+도메인 규칙:
+- gmail_connection_status 로 미연결 상태를 확인했다면 "Gmail 연동을 먼저 해주세요"
+  라고 안내하고 다른 gmail 도구는 더 부르지 마라 — 연동 절차는 이 에이전트가 대신
+  할 수 없다(별도 OAuth 화면에서 해야 한다).
+- 메일 발송 전 받는 사람(to)·제목(subject)·본문(body) 이 명확한지 확인하라. 받는
+  사람을 이름으로만 말하면 이메일 주소를 지어내지 말고 ask_user 로 확인하라 —
+  잘못된 주소로 나간 메일은 되돌릴 수 없다.
+- 검색 결과가 많으면 발신자·제목·날짜 위주로 목록만 요약해 보여주고, 본문 전체가
+  필요할 때만 gmail_get_email 로 상세를 가져와라.
+- "우선순위 분석해서 메일로 보내줘"처럼 프로젝트 심층 분석이 먼저 필요한 요청이면
+  분석 내용을 지어내지 말고 analyze_impact 로 실제 분석 결과를 받아온 뒤, 그 결과를
+  메일 본문으로 정리해 보내라."""
+
 
 _agents: dict = {}
 
@@ -124,3 +149,21 @@ async def get_expense_agent():
     return await _get("expense", [user_me, project_search, budget_summary, expense_list,
                                   expense_create, analyze_impact, recall, doc_search, ask_user, navigate], EXPENSE_PROMPT,
                       "지출 등록 요청입니다.")
+
+
+async def get_mail_agent():
+    """gmail 도구가 async 로만 나오므로 _get() 을 그대로 못 쓴다 — 직접 캐시를 관리한다.
+
+    MCP 서버가 죽어 있어 gmail_* 도구가 하나도 안 붙은(빈 목록) 상태로 만들어졌다면
+    캐시하지 않는다 — 그대로 캐시하면 서버가 살아난 뒤에도 재요청 없이는 계속 빈
+    도구로 남는다. gmail 도구가 하나라도 붙었을 때만 다른 도메인처럼 재사용한다.
+    """
+    if "mail" in _agents:
+        return _agents["mail"]
+
+    tools = [user_me, ask_user, analyze_impact, *await get_gmail_tools()]
+    agent = build_domain_agent(tools, MAIL_PROMPT, await get_checkpointer(),
+                               description_prefix="메일 조회/발송 요청입니다.")
+    if any(getattr(t, "name", "").startswith("gmail_") for t in tools):
+        _agents["mail"] = agent
+    return agent

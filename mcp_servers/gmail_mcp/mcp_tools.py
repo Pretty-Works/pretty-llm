@@ -1,25 +1,31 @@
 # mcp_servers/gmail_mcp/mcp_tools.py
 """Agent에게 실제로 노출되는 MCP 툴들.
 
-⑧ "Agent는 토큰을 전혀 모른다" — 이 파일의 모든 함수 시그니처를 보면 access_token/
-refresh_token 이 인자로도 반환값으로도 등장하지 않는다. Agent는 user_id 만 넘긴다.
+⑧ "Agent는 토큰도 user_id도 모른다" — 이 파일의 모든 함수 시그니처를 보면
+access_token/refresh_token/user_id 가 인자로도 반환값으로도 등장하지 않는다.
+Agent(LLM)는 run_id 만 넘기고, user_id 로의 역산은 이 서버가 run_resolver.py를
+통해 Spring BE에 직접 물어서 한다(§ docs/gmail_mcp_oauth.md 참고, (b) 방식 채택).
 
-user_id 에 대한 메모 — app/tools/registry.py 의 RunContext 는 지금 run_id 만 갖고
-userId 는 안 보낸다("사칭 경로가 생긴다"는 이유). Gmail 은 대화 1회성 run_id 가 아니라
-"이 회사 계정 = 이 Gmail 계정" 처럼 장기로 묶여야 하는 연결이라 별도 user_id 가 필요하다.
-운영 붙일 때 두 방식 중 하나를 고른다:
-  (a) Agent 가 RunContext 에 안전한 채널로 받은 user_id 를 그대로 넘긴다
-      (Spring이 X-Run-Id → userId 역산을 이미 하니, run 시작 시 한 번 받아 세션에 캐시)
-  (b) 이 서버가 자체적으로 run_id 를 받아 Spring 내부 API로 역산해서 쓴다
-      (Agent 프로세스는 여전히 user_id 도 token 도 모르게 유지된다)
-지금은 (a) 를 가정하고 user_id 파라미터로 받는다.
+run_id 를 여기서 직접 받는 이유 — app/tools/registry.py 의 RunContext 는 지금도
+run_id 만 갖고 userId 는 안 보낸다("사칭 경로가 생긴다"는 이유). 그 원칙을 Gmail
+쪽에서도 그대로 지키려면, 이 tool 함수들도 user_id 가 아니라 run_id 를 받아야
+한다 — Agent 쪽(app/clients/gmail_mcp_client.py)이 tool 스키마에서 run_id 를
+LLM에게 숨기고 RunContext 의 현재 run_id 로 강제 주입해주는 것과 짝을 이룬다.
+LLM 이 임의의 user_id 를 tool_call.args 에 써 보낼 수 있는 경로 자체가 없다.
+
+BE의 run_id→user_id API 가 아직 준비 중이라, 지금은 run_resolver.py 의
+dev_run_id_passthrough 로 로컬 테스트를 돌릴 수 있다. API 나오면 run_resolver.py
+만 손보면 되고 이 파일은 그대로 둔다.
 """
 
 from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from mcp_servers.gmail_mcp import gmail_api, token_resolver
+from mcp_servers.gmail_mcp import gmail_api, run_resolver, token_resolver
+from mcp_servers.gmail_mcp.logger import get_logger
+
+log = get_logger("mcp_tools")
 
 mcp = FastMCP(
     name="gmail",
@@ -34,7 +40,14 @@ mcp = FastMCP(
 )
 
 
-async def _resolve_token(user_id: str) -> str | None:
+async def _resolve_token(run_id: str) -> str | None:
+    """run_id → user_id → access_token. 둘 중 어느 단계에서 실패하든 None(미연결 취급)."""
+    try:
+        user_id = await run_resolver.resolve_user_id(run_id)
+    except run_resolver.RunResolutionError as exc:
+        log.warning("run_id=%s → user_id 조회 실패: %s", run_id, exc)
+        return None
+
     try:
         return await token_resolver.get_valid_access_token(user_id)
     except token_resolver.NotConnected:
@@ -42,22 +55,33 @@ async def _resolve_token(user_id: str) -> str | None:
 
 
 @mcp.tool()
-async def gmail_search_emails(user_id: str, query: str, max_results: int = 10) -> dict:
-    """Gmail 검색. query 는 Gmail 검색 문법 그대로 (예: "from:boss@company.com is:unread").
+async def gmail_search_emails(
+    run_id: str,
+    query: str,
+    max_results: int = 10,
+) -> dict:
+    """Gmail 검색."""
 
-    반환: {"connected": bool, "messages": [...]}  — connected=false 면 먼저 연결부터 시켜야 함.
-    """
-    access_token = await _resolve_token(user_id)
+    log.info("gmail_search_emails 호출 run_id=%s query=%r", run_id, query)
+
+    access_token = await _resolve_token(run_id)
     if access_token is None:
+        log.info("run_id=%s: credential 없음(미연결 또는 run 조회 실패)", run_id)
         return {"connected": False, "messages": []}
+
     messages = await gmail_api.search_messages(access_token, query, max_results)
-    return {"connected": True, "messages": messages}
+    log.info("run_id=%s: 검색 결과 %d건", run_id, len(messages))
+
+    return {
+        "connected": True,
+        "messages": messages,
+    }
 
 
 @mcp.tool()
-async def gmail_get_email(user_id: str, message_id: str) -> dict:
+async def gmail_get_email(run_id: str, message_id: str) -> dict:
     """검색으로 얻은 message_id 로 본문 전체를 가져온다."""
-    access_token = await _resolve_token(user_id)
+    access_token = await _resolve_token(run_id)
     if access_token is None:
         return {"connected": False}
     message = await gmail_api.get_message(access_token, message_id)
@@ -65,10 +89,10 @@ async def gmail_get_email(user_id: str, message_id: str) -> dict:
 
 
 @mcp.tool()
-async def gmail_send_email(user_id: str, to: str, subject: str, body: str) -> dict:
+async def gmail_send_email(run_id: str, to: str, subject: str, body: str) -> dict:
     """메일 발송. WRITE 작업이므로 Agent 쪽에서 app/tools/registry.py 의 승인 흐름을 태워야 한다
     (auto 모드 자동 통과 대상이 아니다 — 상대방에게 실제로 메일이 나간다)."""
-    access_token = await _resolve_token(user_id)
+    access_token = await _resolve_token(run_id)
     if access_token is None:
         return {"connected": False}
     result = await gmail_api.send_message(access_token, to, subject, body)
@@ -76,7 +100,7 @@ async def gmail_send_email(user_id: str, to: str, subject: str, body: str) -> di
 
 
 @mcp.tool()
-async def gmail_connection_status(user_id: str) -> dict:
+async def gmail_connection_status(run_id: str) -> dict:
     """Agent가 '메일 보내줘' 요청을 받았는데 미연결일 때, 사용자에게 연결부터 안내하려고 쓴다."""
-    access_token = await _resolve_token(user_id)
+    access_token = await _resolve_token(run_id)
     return {"connected": access_token is not None}

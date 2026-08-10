@@ -26,7 +26,16 @@ from app.common.checkpoint import get_checkpointer
 from app.orchestrator import composite, simple_query
 from app.orchestrator.classify import classify
 from app.orchestrator.domains import agent_for_domain
+from app.schemas.state import Mode
 from app.tools.registry import RunContext
+
+# ★ app.engine_b.replan_agent 는 여기서 top-level import 하지 않는다 — 그 import
+#   체인이 app.engine_b.scenario_executor → graph → app.workers.registry →
+#   workers.meeting.project_fit_agent 까지 이어지는데, 그 파일이 모듈 최상단에서
+#   ChatOpenAI(...)를 즉시 생성한다(LLM API 키가 없으면 import 시점에 그대로 죽는다).
+#   _engine_b_stream() 이 runner.run_engine_b 를 함수 안에서 지연 import 하는 것과
+#   같은 이유로, 여기도 실제로 engine_b 요청이 들어올 때만 늦게 불러온다 — 그래야
+#   app.main import(=서버 기동, 테스트 collection)이 LLM 키 유무와 무관해진다.
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
@@ -107,7 +116,18 @@ async def start_run(req: RunRequest) -> StreamingResponse:
         goal += f"\n(첨부 파일 {len(req.attachments)}개: {names} — 내용은 도구가 읽는다)"
 
     if decision.route == "engine_b":
-        gen = _engine_b_stream(goal, req.runId)
+        # engine_b 안에서 replan(3안 생성 HITL)과 일반 분석(단발)이 갈린다 —
+        # analysis_router 의 LLM 1콜(mode 판단)로 여기서 미리 가른다.
+        from app.engine_b import entry as engine_b_entry
+        from app.engine_b import replan_agent
+
+        plan = await engine_b_entry.route_engine_b(req)
+        if plan.mode == Mode.replan:
+            agent = await replan_agent.get_agent()
+            gen = hitl.stream_run(agent, goal, history, req.runId, ctx,
+                                  route="engine_b", domain="replan")
+        else:
+            gen = _engine_b_stream(goal, req.runId, history)
 
     elif decision.route == "simple_query":
         agent = await simple_query.get_agent()
@@ -171,8 +191,13 @@ async def resume_run(run_id: str, req: ResumeRequest) -> StreamingResponse:
     ctx.conversation_id = meta.get("conversationId")
     ctx.goal = meta.get("goal")
 
-    agent = (await simple_query.get_agent() if route == "simple_query"
-             else await agent_for_domain(domain))
+    if route == "simple_query":
+        agent = await simple_query.get_agent()
+    elif route == "engine_b":            # replan 에이전트 — domain=="replan" 고정
+        from app.engine_b import replan_agent
+        agent = await replan_agent.get_agent()
+    else:
+        agent = await agent_for_domain(domain)
     snapshot = await agent.aget_state({"configurable": {"thread_id": run_id}})
     command = _validated_command(req, snapshot, run_id)
     gen = hitl.stream_command(agent, command, run_id, ctx, route=route, domain=domain)
@@ -212,16 +237,21 @@ def _validated_command(req: ResumeRequest, snapshot, run_id: str):
                                      n_requests=_pending_request_count(snapshot))
 
 
-async def _engine_b_stream(goal: str, run_id: str):
+async def _engine_b_stream(goal: str, run_id: str, history: list[dict] | None = None):
     """engine_b 직행 어댑터 — 분석 엔진의 중립 dict 를 v2 이벤트로 번역한다.
 
     엔진 B 계약(runner.run_engine_b): progress 여러 번 → result 1회.
     progress → step, result.answer → done. 실패는 _guard 가 error 로 마감.
+
+    history: 다른 라우트(simple_query/engine_a/replan)는 전부 hitl.stream_run()에
+    history를 실어 직전 대화를 이어보는데, 이 순수 분석 경로만 여태 안 넘겼다 —
+    "아까 그 분석 이어서 봐줘" 같은 요청이 매번 백지로 시작되던 걸 여기서 고쳤다
+    (실제 사용은 runner.run_engine_b → AnalysisRequest.chat_history).
     """
     from app.engine_b.runner import run_engine_b
 
     answer = ""
-    async for ev in run_engine_b(goal, run_id):
+    async for ev in run_engine_b(goal, run_id, history=history):
         if ev["type"] == "progress":
             yield sse.step(str(ev["text"])[:100])
         elif ev["type"] == "result":
