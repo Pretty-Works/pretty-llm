@@ -126,8 +126,9 @@ async def _members(project_id: int) -> list[dict]:
     raw = await _get(f"/projects/{project_id}/members")
     if raw is None:
         return demo_data.list_project_members(project_id)
+    # 키는 픽스처와 같은 id 로 맞춘다 — Context Builder 가 m["id"] 로 읽는다
     return [
-        {"user_id": m.get("userId"), "name": m.get("name"), "role": m.get("role"),
+        {"id": m.get("userId"), "name": m.get("name"), "role": m.get("role"),
          "department": m.get("department"), "position": m.get("position")}
         for m in raw.get("members", [])
     ]
