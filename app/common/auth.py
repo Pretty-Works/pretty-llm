@@ -24,17 +24,29 @@
   커버되지만, 에이전트가 여러 run/도메인을 넘나드는 경로가 늘어나면 이 파일에
   별도로 채워야 할 수 있다.
 
+★ 수신 키를 송신 키와 분리해 둔 이유 (settings.inbound_api_key)
+  나가는 호출(FastAPI→Spring)은 settings.internal_api_key 를 헤더에 실어 보내야
+  하고 BE 가 이걸 요구한다. 한 값으로 둘을 겸하면 그 키를 채우는 순간 수신 검증도
+  같이 켜지는데, 규격상 Spring→FastAPI 방향엔 인증 헤더가 없어서 BE 의 모든 호출이
+  401 이 된다. 한쪽만 켤 수 없는 구조라 값을 둘로 나눴다.
+
 ★ ①이 아직 "느슨한 모드"로 시작하는 이유
-  settings.internal_api_key(X-Internal-Api-Key)는 BE 팀과 발급/배포 방식을
-  아직 합의 전이라 값이 비어 있다(app/config.py: "아직 미수령") — run_id→user_id
-  API 와 같은 처지다. 값이 비어 있는 동안은 검증을 건너뛴다(그래야 로컬/개발
-  환경, 지금까지의 테스트가 안 막힌다) — 대신 매 요청마다 경고 로그를 남겨
-  "지금 이 배포는 인증이 꺼져 있다"는 사실이 조용히 묻히지 않게 한다. BE 키가
-  나오는 대로 .env 에 INTERNAL_API_KEY 만 채우면 아래 검증이 코드 변경 없이
-  즉시 강제 모드로 바뀐다.
+  inbound_api_key 는 BE 팀과 발급/배포 방식을 아직 합의 전이라 비어 있다. 비어 있는
+  동안은 검증을 건너뛴다(그래야 로컬/개발 환경, 지금까지의 테스트가 안 막힌다) —
+  대신 매 요청마다 경고 로그를 남겨 "지금 이 배포는 인증이 꺼져 있다"는 사실이
+  조용히 묻히지 않게 한다.
+
+  켜기 전 BE 와 맞춰야 할 것: 아래 8개 경로 전부에 헤더를 실어야 한다.
+    /api/agent/runs · /runs/{id}/resume · /api/agent/project-summary
+    /api/agent/meeting-draft · /docs(POST)
+    /api/v1/integrations/gmail/{connect-url,status,connection}
+  특히 gmail 3개는 프론트가 부르는 흐름이라(app/api/integrations.py) BE 중계로
+  바꾸거나 인증 대상에서 빼야 한다 — 브라우저에 이 키를 둘 수는 없다.
 """
 
 from __future__ import annotations
+
+import hmac
 
 from fastapi import Header, HTTPException
 
@@ -51,18 +63,18 @@ async def verify_internal_api_key(
     로 건다 — 개별 엔드포인트마다 챙길 필요 없이 그 라우터(및 중첩된 하위
     라우터) 전체에 적용된다(app/main.py 참고).
 
-    BE가 보내는 X-Internal-Api-Key 헤더가 settings.internal_api_key 와 정확히
+    BE가 보내는 X-Internal-Api-Key 헤더가 settings.inbound_api_key 와 정확히
     일치해야 통과한다. 실패하면 401 — 어떤 값이 왜 틀렸는지는 응답에 담지
     않는다(공격자에게 힌트를 주지 않기 위해서다).
     """
     settings = get_settings()
 
-    if not settings.internal_api_key:
+    if not settings.inbound_api_key:
         log.warning(
-            "INTERNAL_API_KEY 미설정 — 인증 없이 요청을 통과시킴 "
-            "(BE 키 발급 전 임시 상태, 프로덕션 배포 전 반드시 채울 것)"
+            "INBOUND_API_KEY 미설정 — 인증 없이 요청을 통과시킴 "
+            "(BE 와 합의 전 임시 상태, 프로덕션 배포 전 반드시 채울 것)"
         )
         return
 
-    if x_internal_api_key != settings.internal_api_key:
+    if not hmac.compare_digest(x_internal_api_key or "", settings.inbound_api_key):
         raise HTTPException(status_code=401, detail="unauthorized")

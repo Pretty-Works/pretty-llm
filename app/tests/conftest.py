@@ -33,6 +33,7 @@ def fixed_environment(monkeypatch):
     #   인증 자체를 검증하는 테스트(test_internal_api_auth.py)는 이 안에서 필요한
     #   만큼 직접 setenv 해서 덮어쓴다.
     monkeypatch.setenv("INTERNAL_API_KEY", "")
+    monkeypatch.setenv("INBOUND_API_KEY", "")   # 수신 검증도 같은 이유로 꺼둔다
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

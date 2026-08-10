@@ -50,7 +50,11 @@ class Settings(BaseSettings):
 
     # ─── 백엔드 연동 (내부 도구 API = /api/internal/agent/**) ─────
     backend_base_url: str = "http://localhost:3001"   # Spring BE
-    internal_api_key: str = ""                        # X-Internal-Api-Key. 아직 미수령
+    internal_api_key: str = ""                        # 나갈 때 실어 보낸다. BE 가 요구
+    # 들어오는 요청 검증용 — 나가는 키와 분리한다. 둘을 한 값으로 묶으면 BE 호출용
+    # 키를 채우는 순간 수신 검증까지 켜져 Spring→FastAPI 요청이 전부 401 이 된다
+    # (규격상 그 방향엔 인증 헤더가 없다). BE 와 합의된 뒤에만 채운다.
+    inbound_api_key: str = ""
     mock_backend: bool = True                         # true면 HTTP 없이 고정값 반환
     backend_connect_timeout_s: float = 3.0
     backend_read_timeout_s: float = 20.0
