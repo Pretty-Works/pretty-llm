@@ -18,12 +18,14 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.common import llm_client
+from app.prompts.meeting_actions import SYSTEM as ACTIONS_SYSTEM
 from app.prompts.meeting_draft import SYSTEM
 
 router = APIRouter()          # /api/v1/meetings 자리 (routes.py 연결) — 현재 비어 있음
 agent_router = APIRouter()    # /api/agent/** — main.py 가 prefix 없이 등록
 
 _LIMITS = {"title": 200, "location": 100, "purpose": 500}
+_ACTION_LIMIT = 10            # 한 회의에서 뽑는 실행 항목 상한
 
 
 # ─── 요청/응답 (BE→LLM 규격: 봉투 없음, 실패는 HTTP 상태코드) ────
@@ -91,6 +93,108 @@ async def meeting_draft(req: DraftRequest) -> MeetingDraft:
                                     [m.model_dump() for m in req.projectMembers])
     except llm_client.LLMNotConfigured as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+# ─── 실행 항목 추출 (회의록 → 등록할 할 일 후보) ──────────────────
+
+class ActionRequest(BaseModel):
+    """회의록 1건의 재료. 본문은 BE 가 이미 갖고 있는 값을 그대로 실어 보낸다."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    today: str                                                   # yyyy-MM-dd (Asia/Seoul)
+    content: str = ""                                            # 주요 내용
+    followUp: str = ""                                           # 후속 조치 (있으면 같이 본다)
+    title: str = ""
+    meetingDate: str | None = None
+    projectMembers: list[Member] = Field(default_factory=list)   # 담당자 매칭의 유일한 소스
+
+
+class ActionItem(BaseModel):
+    """실행 항목 1건.
+
+    ★ 상태(진행중·완료)는 없다. 회의록을 보고 지금 새로 등록하는 할 일이라 전부
+      아직 안 한 일이고, 상태 칸은 항상 같은 값이 된다. 사용자가 확인하고 고쳐서
+      등록하는 값은 마감일이므로 그쪽을 채운다.
+    """
+
+    action: str
+    assigneeId: int | None = None
+    assigneeName: str | None = None
+    dueDate: str | None = None       # yyyy-MM-dd. 근거 없으면 null
+
+
+class ActionResponse(BaseModel):
+    actions: list[ActionItem]
+
+
+class _ActionDraft(BaseModel):
+    action: str
+    assignee: str | None = None      # 이름. 코드가 명단과 대조해 id 로 바꾼다
+    dueDate: str | None = None
+
+
+class _ActionDrafts(BaseModel):
+    items: list[_ActionDraft]
+
+
+@agent_router.post("/api/agent/meeting-actions", response_model=ActionResponse)
+async def meeting_actions(req: ActionRequest) -> ActionResponse:
+    """회의록에서 등록할 할 일 후보를 뽑는다. 사용자가 확인·수정 후 등록한다."""
+    try:
+        date.fromisoformat(req.today)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="today 는 yyyy-MM-dd 형식이어야 합니다")
+
+    body = "\n".join(p for p in (req.content, req.followUp) if p.strip())
+    if not body.strip():
+        return ActionResponse(actions=[])
+
+    roster = "\n".join(
+        f"- {m.name} ({m.department or '부서 미상'} · {m.position or '직급 미상'})"
+        for m in req.projectMembers
+    ) or "(명단 없음 — assignee 는 전부 null 로 둘 것)"
+
+    try:
+        drafts = await llm_client.structured_call(
+            [{"role": "system", "content": ACTIONS_SYSTEM},
+             {"role": "user", "content": f"기준일(today): {req.today}\n"
+                                         f"회의: {req.title} ({req.meetingDate})\n\n"
+                                         f"참여자 명단:\n{roster}\n\n"
+                                         f"회의 내용:\n{body}"}],
+            _ActionDrafts, profile="reasoning", component="meeting_actions",
+        )
+    except llm_client.LLMNotConfigured as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    return ActionResponse(actions=_sanitize_actions(drafts.items, req.projectMembers))
+
+
+def _sanitize_actions(items: list[_ActionDraft], members: list[Member]) -> list[ActionItem]:
+    """명단 밖 담당자 제거, 날짜 형식 검증, 개수 제한 — 프롬프트가 흘린 것을 코드가 막는다."""
+    by_name = {m.name: m.userId for m in members}
+    out: list[ActionItem] = []
+
+    for it in items[:_ACTION_LIMIT]:
+        action = (it.action or "").strip()
+        if not action:
+            continue
+
+        name = (it.assignee or "").strip() or None
+        uid = by_name.get(name) if name else None
+        if name and uid is None:      # 명단에 없는 사람 — 틀린 사람에게 할 일이 생기면 안 된다
+            name = None
+
+        due = it.dueDate
+        if due:
+            try:
+                date.fromisoformat(due)
+            except ValueError:
+                due = None
+
+        out.append(ActionItem(action=action[:100], assigneeId=uid,
+                              assigneeName=name, dueDate=due))
+    return out
 
 
 def _sanitize(draft: MeetingDraft, roster_ids: set[int]) -> MeetingDraft:
