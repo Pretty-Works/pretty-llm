@@ -8,6 +8,7 @@
 백엔드가 안 떠 있어도 픽스처(app/tools/demo_data.py)로 끝까지 돈다.
 """
 
+import asyncio
 import sys
 
 from app.engine_b.graph import run_analysis
@@ -21,11 +22,13 @@ def main() -> None:
     query = sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_QUERY
     project_id = sys.argv[2] if len(sys.argv) > 2 else _DEFAULT_PROJECT
 
-    state = run_analysis(
-        AnalysisRequest(
-            query=query,
-            user_id=1,
-            ui_context=UIContext(screen="project_detail", project_id=project_id),
+    state = asyncio.run(
+        run_analysis(
+            AnalysisRequest(
+                query=query,
+                user_id=1,
+                ui_context=UIContext(screen="project_detail", project_id=project_id),
+            )
         )
     )
 
