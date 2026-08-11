@@ -426,23 +426,9 @@ def _check_skill_fit(
                 subject=target,
             )
 
-        recommended = assignment.get("recommended") or {}
-        _check_candidate(output, context, report, recommended, target, known_users, primary=True)
-
-        alternatives = assignment.get("alternatives") or []
-        if not alternatives:
-            _add(
-                report,
-                output,
-                "NO_ALTERNATIVE",
-                f"{target} 에 대안 후보가 없다.",
-                "1순위가 빠질 때를 대비해 대안 후보를 최소 1명 제시하라.",
-                subject=target,
-            )
-        for candidate in alternatives:
-            _check_candidate(
-                output, context, report, candidate, target, known_users, primary=False
-            )
+        # 순위가 없는 구조라 '1순위/대안' 검사는 하지 않는다 (2026-08-11 재설계).
+        for candidate in assignment.get("matches") or []:
+            _check_candidate(output, context, report, candidate, target, known_users)
 
 
 def _check_candidate(
@@ -452,8 +438,6 @@ def _check_candidate(
     candidate: dict[str, Any],
     target: str,
     known_users: set[str],
-    *,
-    primary: bool,
 ) -> None:
     user_id = str(candidate.get("user_id", ""))
     if not user_id:
@@ -470,36 +454,26 @@ def _check_candidate(
         )
         return
 
-    # 가용성: 승인된 휴가와 겹치면 1순위 추천은 성립하지 않는다.
+    # 부재는 배제 사유가 아니라 밝혀야 할 사실이다 — note 에 안 적혀 있으면 짚는다.
     conflict = _leave_conflict(context, user_id)
-    if conflict and primary:
+    if conflict and conflict not in str(candidate.get("note", "")):
         _add(
             report,
             output,
             "MEMBER_UNAVAILABLE",
-            f"{user_id} 는 {conflict} 기간에 승인된 휴가가 있는데 1순위로 추천됐다.",
-            f"{user_id} 대신 대안 후보를 1순위로 올리거나, 휴가 기간을 피한 배정을 제시하라.",
+            f"{user_id} 는 {conflict} 기간에 승인된 휴가가 있는데 note 에 없다.",
+            f"{user_id} 의 note 에 {conflict} 부재를 적어라. 배제하라는 뜻이 아니라 밝히라는 뜻이다.",
+            severity="warning",
             subject=user_id,
         )
 
-    score = _as_int(candidate.get("fit_score"))
-    if not 0 <= score <= 100:
-        _add(
-            report,
-            output,
-            "SCORE_RANGE",
-            f"{user_id} 의 fit_score 가 범위를 벗어났다 ({score}).",
-            "fit_score 는 0~100 사이여야 한다.",
-            subject=user_id,
-        )
-
-    if primary and not str(candidate.get("basis", "")).strip():
+    if not str(candidate.get("basis", "")).strip():
         _add(
             report,
             output,
             "NO_BASIS",
-            f"{user_id} 를 추천한 근거가 비어 있다.",
-            "부서/직책/과거 role/처리한 할 일 중 무엇을 근거로 삼았는지 basis 에 적어라.",
+            f"{user_id} 를 제시한 근거가 비어 있다.",
+            "이 프로젝트에서의 역할과 처리한 할 일 중 무엇을 봤는지 basis 에 적어라.",
             subject=user_id,
         )
 

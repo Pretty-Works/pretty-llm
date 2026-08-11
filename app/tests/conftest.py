@@ -64,7 +64,47 @@ def request_p001() -> AnalysisRequest:
 
 
 @pytest.fixture
-async def context_p001(project_plan, request_p001):
+def fixture_backed_hr(monkeypatch):
+    """휴가·일정 내부도구 자리에 픽스처를 끼운다.
+
+    hr_tool 은 이제 실API 만 부른다 (2026-08-11 재설계 — 픽스처 폴백 제거).
+    테스트는 그 API 자리에 demo_data 를 끼워 '백엔드가 답한 상태'를 만든다.
+    프로덕션 코드에 픽스처 분기를 남기지 않으면서 같은 시나리오를 재현하는 방법이다.
+    """
+    from app.tools import demo_data, hr_tool
+
+    names = {u["id"]: u["name"] for u in demo_data.USERS}
+
+    async def leaves(user_ids, date_from, date_to):
+        return [
+            leave
+            for uid in user_ids
+            for leave in demo_data.list_leaves(
+                user_id=uid, date_from=date_from, date_to=date_to, status="APPROVED"
+            )
+        ]
+
+    async def schedules(user_ids, date_from, date_to):
+        targets = set(user_ids)
+        return [
+            {
+                "id": s["id"],
+                "title": s["title"],
+                "start_at": f"{s['date']}T{s['start_time']}:00",
+                "end_at": f"{s['date']}T{s['end_time']}:00",
+                "all_day": False,
+                "participant_names": [names.get(p, "") for p in s["participants"]],
+            }
+            for s in demo_data.list_schedules(date_from=date_from, date_to=date_to)
+            if targets & set(s["participants"])
+        ]
+
+    monkeypatch.setattr(hr_tool, "fetch_leaves", leaves)
+    monkeypatch.setattr(hr_tool, "fetch_schedules", schedules)
+
+
+@pytest.fixture
+async def context_p001(project_plan, request_p001, fixture_backed_hr):
     """p001 기준 실제 컨텍스트 (픽스처 데이터로 조립)."""
     return await build_context(project_plan, request_p001)
 

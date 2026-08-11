@@ -16,7 +16,7 @@ from app.clients.gmail_mcp_client import get_gmail_read_tools
 from app.prompts import risk as prompt
 from app.schemas.lenient import LenientModel
 from app.tools.budget_tool import get_project_budget
-from app.tools.hr_tool import list_user_leaves
+from app.tools.hr_tool import list_member_leaves
 from app.tools.project_query import PROJECT_TOOLS
 from app.workers.base import WorkerSpec
 
@@ -55,7 +55,7 @@ SPEC = WorkerSpec(
     role=prompt.ROLE,
     method=prompt.METHOD,
     result_model=RiskResult,
-    tools=(*PROJECT_TOOLS, get_project_budget, list_user_leaves),
+    tools=(*PROJECT_TOOLS, get_project_budget, list_member_leaves),
     async_tools=get_gmail_read_tools,
     context_sections=("project", "todos", "members", "budget", "leaves", "workload"),
 )
