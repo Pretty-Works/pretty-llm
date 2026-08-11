@@ -75,6 +75,11 @@ from app.api.meeting import agent_router as meeting_draft_router  # noqa: E402
 
 app.include_router(meeting_draft_router, dependencies=_INTERNAL_ONLY)
 
+# 에이전트 패널 추천 문구 (BE→LLM, 단발 JSON) — 화면 진입 시 보여줄 3개
+from app.api.suggestions import agent_router as suggestions_router  # noqa: E402
+
+app.include_router(suggestions_router, dependencies=_INTERNAL_ONLY)
+
 
 # 글로벌 예외 핸들러
 @app.exception_handler(Exception)
