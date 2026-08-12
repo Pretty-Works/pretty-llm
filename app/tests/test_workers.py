@@ -274,6 +274,7 @@ def test_프로덕션_코드는_픽스처를_임포트하지_않는다():
     조회 실패는 빈 결과이고 호출부가 '확인 못 함'으로 처리한다.
     """
     import pathlib
+    import re
 
     root = pathlib.Path(__file__).resolve().parents[1]
     scanned = [
@@ -285,12 +286,15 @@ def test_프로덕션_코드는_픽스처를_임포트하지_않는다():
     ]
     assert scanned, "스캔 대상을 못 찾음"
 
+    # 주석·docstring 의 언급은 봐준다 — 막아야 하는 건 실제 임포트다.
+    import_pattern = re.compile(r"^\s*(from\s+\S*demo_data|from\s+\S+\s+import\s+.*demo_data|import\s+\S*demo_data)",
+                                re.MULTILINE)
     offenders = [
         str(path.relative_to(root))
         for path in scanned
-        if "demo_data" in path.read_text(encoding="utf-8")
+        if import_pattern.search(path.read_text(encoding="utf-8"))
     ]
-    assert not offenders, f"프로덕션 코드가 픽스처를 참조한다: {offenders}"
+    assert not offenders, f"프로덕션 코드가 픽스처를 임포트한다: {offenders}"
 
 
 def test_데이터게이트가_근거없는_축을_건너뛴다():
@@ -311,8 +315,8 @@ async def test_대상이_없으면_참여중인_프로젝트로_떨어진다(req
 
     context = await build_context(plan, request_p001)
 
-    # u001 은 p001, p003 참여 (p000 은 COMPLETED 라 제외)
-    assert {p.id for p in context.projects} == {1001, 1003}
+    # u001 은 p001, p003, p004 참여 (p000 은 COMPLETED 라 제외)
+    assert {p.id for p in context.projects} == {1001, 1003, 1004}
 
 
 def test_렌더링에_지연_표시가_들어간다(context_p001):
