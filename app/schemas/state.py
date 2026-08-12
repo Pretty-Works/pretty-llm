@@ -286,7 +286,7 @@ class AnalysisContext(BaseModel):
     skipped: list[str] = Field(default_factory=list)
     # 본인 스코프 질문("뭐부터 할까")일 때만 채워진다. me 도메인 전용.
     my_week: "MyWeekSnapshot | None" = None
-    # app.tools.hr_tool.compute_workload() 결과. 셀 수 있는 부하 지표는
+    # context_builder._availability() 결과. 셀 수 있는 가용성 지표는
     # LLM 이 아니라 코드가 계산해서 넣는다. (hcm 도메인일 때만 채워진다)
     workloads: list[dict[str, Any]] = Field(default_factory=list)
     window_from: date | None = None

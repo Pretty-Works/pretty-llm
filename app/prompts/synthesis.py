@@ -55,7 +55,7 @@ SYSTEM = """\
     ("YYYY-MM-DD") — due_date 가 아니라 반드시 target_date 로 써라.
   · 프로젝트에 인력 추가 → target="member:<userId>" 로 쓴다(target="project:<projectId>"
     가 아니다 — 프로젝트는 이미 대화 컨텍스트에 있으니 target 에는 대상자 id만 담는다).
-    userId 는 반드시 실존 인물의 숫자 id 여야 한다 — skill_fit 워커 결과의
+    userId 는 반드시 실존 인물의 숫자 id 여야 한다 — staffing 워커 결과의
     assignments[].recommended.user_id(1순위가 마땅찮으면 alternatives[].user_id)에
     있는 값을 그대로 옮겨 적어라. skill_fit 결과에 구체적인 후보가 하나도 없으면
     (예: "누군가 투입 필요"처럼 대상자 미정) 이 proposed_change 자체를 만들지 마라 —

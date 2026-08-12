@@ -56,6 +56,23 @@ def _projects_payload(requester_id: int) -> dict:
     }
 
 
+def _meetings_payload(project_id: int) -> dict:
+    return {
+        "meetings": [
+            {"meetingId": m["id"], "title": m.get("title"), "meetingDate": _iso(m.get("date")),
+             "purpose": m.get("purpose"), "attendeeNames": m.get("attendee_names") or []}
+            for m in demo_data.MEETINGS if m["project_id"] == project_id
+        ]
+    }
+
+
+def _meeting_detail(meeting_id: int) -> dict | None:
+    meeting = next((m for m in demo_data.MEETINGS if m["id"] == meeting_id), None)
+    if not meeting:
+        return None
+    return {"content": meeting.get("content"), "followUp": meeting.get("follow_up")}
+
+
 def _budget_payload(project_id: int) -> dict | None:
     budget = demo_data.get_budget(project_id)
     if not budget:
@@ -120,7 +137,9 @@ def install(setattr_fn, requester_id: int = 1) -> None:
         if path.endswith("/milestones"):
             return {"milestones": []}      # 픽스처에 마일스톤이 없다 — 없는 그대로 낸다
         if path.endswith("/meetings"):
-            return {"meetings": []}
+            return _meetings_payload(int(path.split("/")[2]))
+        if "/meetings/" in path:
+            return _meeting_detail(int(path.rsplit("/", 1)[1]))
         return None
 
     async def budget_get(path: str, **params):

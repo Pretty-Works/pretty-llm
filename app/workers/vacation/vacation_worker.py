@@ -74,5 +74,5 @@ SPEC = WorkerSpec(
     method=prompt.METHOD,
     result_model=VacationImpactResult,
     tools=(find_user, list_member_leaves, list_project_tasks),
-    context_sections=("project", "todos", "members", "leaves", "workload"),
+    context_sections=("project", "milestones", "todos", "members", "leaves", "workload"),
 )
