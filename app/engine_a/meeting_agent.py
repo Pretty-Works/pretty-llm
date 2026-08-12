@@ -48,6 +48,6 @@ async def get_agent():
              recall, doc_search, ask_user, navigate],
             DOMAIN_PROMPT,
             await get_checkpointer(),
-            description_prefix="회의록 저장 요청입니다.",
+            description_prefix="회의록 저장",
         )
     return _agent

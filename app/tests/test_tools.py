@@ -13,6 +13,13 @@ import asyncio
 
 from langchain.tools import ToolRuntime
 
+# ★ 회귀는 항상 mock 으로 돈다 — .env 가 MOCK_BACKEND=false 여도 강제한다.
+#   이 스위트들은 승인까지 태워 실제로 저장을 실행하므로(회의록·연차·할일),
+#   실 BE 를 보게 두면 테스트를 돌릴 때마다 진짜 데이터가 쌓이고 연차는
+#   승인자에게 알림까지 나간다. conftest 는 pytest 전용이라 여기엔 안 걸린다.
+import os  # noqa: E402
+os.environ["MOCK_BACKEND"] = "true"
+
 from app.clients.backend import canonical_json
 from app.tools.ask_user import ask_user
 from app.tools.expense_tool import budget_summary, expense_create, expense_list
@@ -94,7 +101,11 @@ async def test_read_tools() -> None:
     checks = [
         (user_me, {}, "오늘: 2026-08-05"),
         (user_search, {"keyword": "김서준"}, "[2] 김서준"),
-        (project_search, {"keyword": "그룹웨어"}, "[3] 그룹웨어 AI 고도화"),
+        (project_search, {"keyword": "그룹웨어", "status": None}, "[3] 그룹웨어 AI 고도화"),
+        # 이름을 지목 안 한 경우 — keyword=None 이면 참여 중 전체 (명세: keyword 선택)
+        (project_search, {"keyword": None, "status": None}, "[7] 검색 고도화"),
+        # status="ALL" 이어야 완료 프로젝트까지 보인다 (명세: 생략 시 ONGOING 만)
+        (project_search, {"keyword": None, "status": "ALL"}, "[11] 레거시 정산 이관"),
         (project_members, {"projectId": 3}, "★본인"),
         (milestone_list, {"projectId": 3}, "베타 오픈"),
         (task_list, {"projectId": None, "weekOffset": 0}, "이월"),

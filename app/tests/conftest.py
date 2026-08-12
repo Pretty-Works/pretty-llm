@@ -34,6 +34,10 @@ def fixed_environment(monkeypatch):
     #   만큼 직접 setenv 해서 덮어쓴다.
     monkeypatch.setenv("INTERNAL_API_KEY", "")
     monkeypatch.setenv("INBOUND_API_KEY", "")   # 수신 검증도 같은 이유로 꺼둔다
+    # ★ delenv("BACKEND_BASE_URL") 만으로는 픽스처 모드가 안 된다 — 위 주석과 같은
+    #   이유로 pydantic-settings 가 .env 를 다시 읽어 실제 주소를 채운다. 게다가
+    #   clients/backend.py 는 uses_fixtures 가 아니라 mock_backend 만 본다.
+    monkeypatch.setenv("MOCK_BACKEND", "true")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

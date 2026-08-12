@@ -184,17 +184,26 @@ def _mock_get(path: str, params: dict[str, Any]) -> Any:
         hits = [u for u in users if kw in u["name"]]
         return {"users": hits, "totalCount": len(hits), "truncated": False}
     if path == "/projects":
-        return {
-            "projects": [
-                {"projectId": 3, "name": "그룹웨어 AI 고도화", "status": "ONGOING",
-                 "startDate": "2026-06-01", "targetDate": "2026-09-30", "myRole": "백엔드",
-                 "isOwner": False, "targetBudget": 30000000, "isOpenForContent": True},
-                {"projectId": 7, "name": "검색 고도화", "status": "ONGOING",
-                 "startDate": "2026-07-01", "targetDate": "2026-12-31", "myRole": None,
-                 "isOwner": True, "targetBudget": 0, "isOpenForContent": True},
-            ],
-            "totalCount": 2, "truncated": False,
-        }
+        # ★ 명세대로 keyword 부분일치 + status 필터를 흉내낸다 (project.search).
+        #   예전엔 인자를 무시하고 전체를 돌려줘서, LLM 이 "최근" 같은 일반 단어를
+        #   keyword 로 넘겨도 로컬에선 멀쩡해 보였다 — 실 BE 에서만 0건이 나 터졌다.
+        #   status 생략 시 ONGOING 만, "ALL" 이면 전부 (명세 Query Parameters).
+        projects = [
+            {"projectId": 3, "name": "그룹웨어 AI 고도화", "status": "ONGOING",
+             "startDate": "2026-06-01", "targetDate": "2026-09-30", "myRole": "백엔드",
+             "isOwner": False, "targetBudget": 30000000, "isOpenForContent": True},
+            {"projectId": 7, "name": "검색 고도화", "status": "ONGOING",
+             "startDate": "2026-07-01", "targetDate": "2026-12-31", "myRole": None,
+             "isOwner": True, "targetBudget": 0, "isOpenForContent": True},
+            {"projectId": 11, "name": "레거시 정산 이관", "status": "COMPLETED",
+             "startDate": "2026-02-01", "targetDate": "2026-05-31", "myRole": "백엔드",
+             "isOwner": False, "targetBudget": 8000000, "isOpenForContent": False},
+        ]
+        kw = params.get("keyword") or ""
+        st = params.get("status") or "ONGOING"
+        hits = [p for p in projects
+                if kw in p["name"] and (st == "ALL" or p["status"] == st)]
+        return {"projects": hits, "totalCount": len(hits), "truncated": False}
     if path.endswith("/members"):
         return {
             "projectId": 3,

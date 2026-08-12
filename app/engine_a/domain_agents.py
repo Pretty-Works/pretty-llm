@@ -31,6 +31,7 @@ from app.tools.ask_user import ask_user
 from app.tools.expense_tool import budget_summary, expense_create, expense_list
 from app.tools.navigate import navigate
 from app.tools.project_tool import project_members, project_search
+from app.tools.read_errors import read_error_middleware
 from app.tools.registry import RunContext, is_write
 from app.tools.schedule_tool import schedule_create, schedule_list, schedule_update
 from app.tools.task_tool import task_create, task_list, task_toggle_status
@@ -59,13 +60,16 @@ def build_domain_agent(tools: list, domain_prompt: str, checkpointer,
     identity, _, rest = domain_prompt.partition("\n\n")
     system_prompt = identity + "\n" + COMMON_RULES + ("\n\n" + rest if rest else "")
 
-    model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider)
+    # temperature 를 안 넘기면 provider 기본값으로 돌아 같은 질문에도 도구 선택이
+    # 흔들린다 (실측: 동일 입력 5회에 응답 2가지). 라우팅·도구 선택은 결정적이어야 한다.
+    model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider,
+                                temperature=settings.llm_temperature)
     return create_agent(
         model,
         tools=tools,
         system_prompt=system_prompt,
         context_schema=RunContext,
-        middleware=[HumanInTheLoopMiddleware(**kwargs)],
+        middleware=[HumanInTheLoopMiddleware(**kwargs), read_error_middleware()],
         checkpointer=checkpointer,
     )
 
@@ -136,19 +140,19 @@ async def _get(key: str, tools: list, prompt: str, prefix: str):
 async def get_task_agent():
     return await _get("task", [user_me, project_search, task_list, task_create,
                                task_toggle_status, analyze_impact, recall, doc_search, ask_user, navigate], TASK_PROMPT,
-                      "할일 등록/변경 요청입니다.")
+                      "할 일 등록/변경")
 
 
 async def get_schedule_agent():
     return await _get("schedule", [user_me, user_search, project_members, schedule_list,
                                    schedule_create, schedule_update, analyze_impact, recall, doc_search, ask_user, navigate],
-                      SCHEDULE_PROMPT, "일정 등록/변경 요청입니다.")
+                      SCHEDULE_PROMPT, "일정 등록/변경")
 
 
 async def get_expense_agent():
     return await _get("expense", [user_me, project_search, budget_summary, expense_list,
                                   expense_create, analyze_impact, recall, doc_search, ask_user, navigate], EXPENSE_PROMPT,
-                      "지출 등록 요청입니다.")
+                      "지출 등록")
 
 
 async def get_mail_agent():
@@ -163,7 +167,7 @@ async def get_mail_agent():
 
     tools = [user_me, ask_user, analyze_impact, *await get_gmail_tools()]
     agent = build_domain_agent(tools, MAIL_PROMPT, await get_checkpointer(),
-                               description_prefix="메일 조회/발송 요청입니다.")
+                               description_prefix="메일 조회/발송")
     if any(getattr(t, "name", "").startswith("gmail_") for t in tools):
         _agents["mail"] = agent
     return agent

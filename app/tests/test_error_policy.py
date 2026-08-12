@@ -22,6 +22,13 @@ import uuid
 
 import httpx
 
+# ★ 회귀는 항상 mock 으로 돈다 — .env 가 MOCK_BACKEND=false 여도 강제한다.
+#   이 스위트들은 승인까지 태워 실제로 저장을 실행하므로(회의록·연차·할일),
+#   실 BE 를 보게 두면 테스트를 돌릴 때마다 진짜 데이터가 쌓이고 연차는
+#   승인자에게 알림까지 나간다. conftest 는 pytest 전용이라 여기엔 안 걸린다.
+import os  # noqa: E402
+os.environ["MOCK_BACKEND"] = "true"
+
 from app.config import settings
 from app.common.exceptions import (ApprovalRequiredError, BackendUnavailableError,
                                    BackendValidationError, ParamsMismatchError,
@@ -104,6 +111,50 @@ async def unit_tests() -> None:
     print("✅ ⑥ 도구는 예외 대신 안내문 반환 (LLM 이 읽는 형태)", flush=True)
 
 
+async def read_error_tests() -> None:
+    """⑧⑨ 조회 실패 정책 — 백엔드 예외 2종만 문장으로, 나머지는 전파.
+
+    ⑩ 통합(실 LLM): 조회 4xx 1회 주입 → 실행이 안 죽고 재시도로 답변까지 감.
+    """
+    from app.tools.read_errors import _read_error_text
+
+    txt = _read_error_text(BackendValidationError("없는 프로젝트", backend_code="AGENT_004"), None)
+    assert txt and "AGENT_004" in txt and "다시 호출" in txt, txt
+    txt = _read_error_text(BackendUnavailableError("503"), None)
+    assert txt and "다시 시도" in txt, txt
+    print("✅ ⑧ 조회 4xx/5xx → LLM 용 안내문으로 변환", flush=True)
+
+    assert _read_error_text(RuntimeError("코드 버그"), None) is None
+    print("✅ ⑨ 그 밖의 예외는 전파 (실행 중단이 맞다)", flush=True)
+
+    # ⑩ 통합 — simple_query 에이전트에 조회 4xx 1회 주입, 복구 관찰
+    from app.clients import backend as backend_mod
+    from app.orchestrator.simple_query import build_simple_agent
+
+    original = backend_mod.backend.get
+    state = {"failed_once": False}
+
+    async def flaky_get(path, run_id, **params):
+        if not state["failed_once"]:
+            state["failed_once"] = True
+            raise BackendValidationError(
+                f"존재하지 않는 리소스입니다: {path}", backend_code="AGENT_004")
+        return await original(path, run_id=run_id, **params)
+
+    backend_mod.backend.get = flaky_get
+    try:
+        agent = build_simple_agent()
+        r = await agent.ainvoke(
+            {"messages": [("user", "그룹웨어 AI 고도화 프로젝트 회의록 목록 보여줘")]},
+            context=RunContext(run_id="run_test"))
+        answer = r["messages"][-1].content
+        assert state["failed_once"], "주입된 4xx 를 타지 않음"
+        assert answer, "답변이 비었음"
+        print(f"✅ ⑩ 조회 4xx 후 실행 생존 → 답변: {str(answer)[:80]}…", flush=True)
+    finally:
+        backend_mod.backend.get = original
+
+
 async def integration_test() -> None:
     """⑦ 승인 후 실행에서 4xx → 실행이 안 죽고 새 approval_request 로 재제안."""
     from app.main import app
@@ -128,7 +179,7 @@ async def integration_test() -> None:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t",
                                      timeout=120,
-                                     headers={"X-Internal-Api-Key": settings.internal_api_key}) as client:
+                                     headers={"X-Internal-Api-Key": settings.inbound_api_key}) as client:
 
             async def collect(url, body):
                 events, name = [], None
@@ -171,6 +222,7 @@ async def integration_test() -> None:
 async def main() -> None:
     try:
         await unit_tests()
+        await read_error_tests()
         await integration_test()
     finally:
         # done 훅이 기억 카드용 스토어도 열므로 그쪽도 닫아야 프로세스가 끝난다

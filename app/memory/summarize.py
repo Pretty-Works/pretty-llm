@@ -33,7 +33,10 @@ _llm = None
 def _get_llm():
     global _llm
     if _llm is None:
-        model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider)
+        # temperature 를 안 넘기면 provider 기본값으로 돌아 같은 질문에도 도구 선택이
+        # 흔들린다 (실측: 동일 입력 5회에 응답 2가지). 라우팅·도구 선택은 결정적이어야 한다.
+        model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider,
+                                    temperature=settings.llm_temperature)
         _llm = model.with_structured_output(ConvCard)
     return _llm
 

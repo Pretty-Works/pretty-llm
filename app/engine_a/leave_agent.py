@@ -42,6 +42,6 @@ async def get_agent():
              schedule_list, analyze_impact, recall, doc_search, ask_user, navigate],
             DOMAIN_PROMPT,
             await get_checkpointer(),
-            description_prefix="휴가 신청/변경 요청입니다.",
+            description_prefix="휴가 신청/변경",
         )
     return _agent
