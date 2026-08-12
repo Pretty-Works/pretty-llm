@@ -24,6 +24,13 @@ import uuid
 
 import httpx
 
+# ★ 회귀는 항상 mock 으로 돈다 — .env 가 MOCK_BACKEND=false 여도 강제한다.
+#   이 스위트들은 승인까지 태워 실제로 저장을 실행하므로(회의록·연차·할일),
+#   실 BE 를 보게 두면 테스트를 돌릴 때마다 진짜 데이터가 쌓이고 연차는
+#   승인자에게 알림까지 나간다. conftest 는 pytest 전용이라 여기엔 안 걸린다.
+import os  # noqa: E402
+os.environ["MOCK_BACKEND"] = "true"
+
 from app.config import settings
 from app.main import app
 
@@ -87,13 +94,13 @@ async def _scenarios() -> None:
     assert len(pushed) >= 2, f"progress 중계 안 됨: {pushed}"
     print(f"✅ ③ analyze_impact: 진행 {len(pushed)}건 중계 + 결과 반환", flush=True)
 
-    # ★ app/common/auth.py의 verify_internal_api_key — .env에 INTERNAL_API_KEY가
+    # ★ app/common/auth.py의 verify_internal_api_key — .env에 INBOUND_API_KEY가
     #   채워진 순간부터 /api/agent/** 가 이 헤더 없인 401을 낸다(BE 흉내). 키가
     #   비어 있으면 auth 쪽이 검증 자체를 건너뛰므로 이 헤더를 늘 보내도 안전하다.
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test",
                                  timeout=180,
-                                 headers={"X-Internal-Api-Key": settings.internal_api_key}) as client:
+                                 headers={"X-Internal-Api-Key": settings.inbound_api_key}) as client:
 
         # ── ② 직행 — 분석 요청이 engine_b 로 완주 ────────────
         events = await _collect_sse(client, "/api/agent/runs",

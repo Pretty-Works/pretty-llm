@@ -93,7 +93,10 @@ def _build_checkpointer() -> SqliteSaver:
 # ── 에이전트 조립 ──────────────────────────────────────────
 def build_vacation_agent():
     """연차 승인 에이전트를 만든다. approve_vacation 호출 시 사람 승인을 받는다."""
-    model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider)
+    # temperature 를 안 넘기면 provider 기본값으로 돌아 같은 질문에도 도구 선택이
+    # 흔들린다 (실측: 동일 입력 5회에 응답 2가지). 라우팅·도구 선택은 결정적이어야 한다.
+    model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider,
+                                temperature=settings.llm_temperature)
     return create_agent(
         model,
         tools=[check_vacation_impact, approve_vacation],
@@ -106,7 +109,7 @@ def build_vacation_agent():
                     "approve_vacation": {"allowed_decisions": ["approve", "reject"]},
                     "check_vacation_impact": False,   # 읽기 = 자동 실행
                 },
-                description_prefix="연차 승인 요청입니다. 내용을 확인하고 승인 또는 반려해주세요.",
+                description_prefix="연차 승인",
             )
         ],
         checkpointer=_build_checkpointer(),

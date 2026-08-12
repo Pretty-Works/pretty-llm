@@ -21,16 +21,31 @@ from app.tools.registry import RunContext
 
 
 @tool
-async def project_search(keyword: str, runtime: ToolRuntime[RunContext]) -> str:
-    """내가 참여 중인 프로젝트를 이름으로 검색한다.
+async def project_search(keyword: str | None, status: str | None,
+                         runtime: ToolRuntime[RunContext]) -> str:
+    """내가 참여 중인 프로젝트를 찾는다. projectId 를 모를 때 가장 먼저 부른다.
 
-    사용자가 프로젝트를 이름으로 말했는데 projectId 를 모를 때 가장 먼저 부른다.
-    keyword: 프로젝트 이름 일부 (예: "그룹웨어")
+    keyword: 사용자가 **프로젝트 이름을 말했을 때만** 그 일부를 넣는다 (예: "그룹웨어").
+      ★ "최근"·"이번"·"내"·"회의" 같은 일반 단어를 넣지 마라 — 이름 부분일치 검색이라
+        0건이 된다. 사용자가 프로젝트를 지목하지 않았으면 **null** 로 두면
+        참여 중인 전체가 온다.
+    status: 보통 null. 그러면 진행 중(ONGOING)만 온다.
+      사용자가 "끝난 것까지"·"전부"처럼 완료된 프로젝트도 원하면 "ALL" 을 넣는다.
     """
-    r = await backend.get("/projects", run_id=runtime.context.run_id, keyword=keyword)
+    params: dict = {}
+    if keyword:
+        params["keyword"] = keyword
+    if status:
+        params["status"] = status          # 생략 시 BE 기본값 = ONGOING 만
+
+    r = await backend.get("/projects", run_id=runtime.context.run_id, **params)
     items = r.get("projects", [])
     if not items:
-        return f"'{keyword}' 로 참여 중인 프로젝트를 찾지 못했습니다. 이름을 다시 확인해 주세요."
+        # 0건은 에러가 아니다(규격) — 다음 행동을 알려줘 LLM 이 스스로 복구하게 한다.
+        scope = f"'{keyword}' 로 검색한 " if keyword else ""
+        return (f"{scope}참여 중인 프로젝트가 없습니다. "
+                f"keyword 를 null 로 두고 다시 부르거나, 끝난 프로젝트까지 보려면 "
+                f"status='ALL' 로 불러 보세요.")
 
     lines = []
     for p in items:

@@ -46,6 +46,6 @@ async def get_agent():
              milestone_toggle_status, analyze_impact, recall, doc_search, fill_form, ask_user, navigate],
             DOMAIN_PROMPT,
             await get_checkpointer(),
-            description_prefix="마일스톤 상태 변경 요청입니다.",
+            description_prefix="마일스톤 상태 변경",
         )
     return _agent

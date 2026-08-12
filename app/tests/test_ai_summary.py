@@ -14,10 +14,10 @@ from app.api.project import SummaryRequest
 from app.config import settings
 from app.main import app
 
-# ★ app/common/auth.py의 verify_internal_api_key — .env에 INTERNAL_API_KEY가
+# ★ app/common/auth.py의 verify_internal_api_key — .env에 INBOUND_API_KEY가
 #   채워진 순간부터 /api/agent/** 가 이 헤더 없인 401을 낸다(BE 흉내). 키가
 #   비어 있으면 auth 쪽이 검증 자체를 건너뛰므로 이 헤더를 늘 보내도 안전하다.
-_AUTH_HEADERS = {"X-Internal-Api-Key": settings.internal_api_key}
+_AUTH_HEADERS = {"X-Internal-Api-Key": settings.inbound_api_key}
 
 TODAY = date(2026, 8, 6)
 

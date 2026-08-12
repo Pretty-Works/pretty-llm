@@ -32,6 +32,7 @@ from app.tools.expense_tool import budget_summary, expense_create, expense_list
 from app.tools.meeting_tool import meeting_list
 from app.tools.navigate import navigate
 from app.tools.project_tool import project_members, project_search
+from app.tools.read_errors import read_error_middleware
 from app.tools.registry import RunContext, is_write
 from app.tools.schedule_tool import schedule_create, schedule_list, schedule_update
 from app.tools.task_tool import task_create, task_due_within, task_list, task_toggle_status, task_update
@@ -60,13 +61,16 @@ def build_domain_agent(tools: list, domain_prompt: str, checkpointer,
     identity, _, rest = domain_prompt.partition("\n\n")
     system_prompt = identity + "\n" + COMMON_RULES + ("\n\n" + rest if rest else "")
 
-    model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider)
+    # temperature 를 안 넘기면 provider 기본값으로 돌아 같은 질문에도 도구 선택이
+    # 흔들린다 (실측: 동일 입력 5회에 응답 2가지). 라우팅·도구 선택은 결정적이어야 한다.
+    model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider,
+                                temperature=settings.llm_temperature)
     return create_agent(
         model,
         tools=tools,
         system_prompt=system_prompt,
         context_schema=RunContext,
-        middleware=[HumanInTheLoopMiddleware(**kwargs)],
+        middleware=[HumanInTheLoopMiddleware(**kwargs), read_error_middleware()],
         checkpointer=checkpointer,
     )
 
@@ -129,7 +133,13 @@ SCHEDULE_PROMPT = """당신은 그룹웨어의 일정 담당 에이전트입니�
 - 휴가는 이 도메인이 아니다 — type=LEAVE 로 일정을 만들지 마라. 연차 요청이면
   연차 신청으로 처리해야 한다고 안내하라. 휴가 일정(isLeave)은 수정도 못 한다.
 - 일정 수정 시 참가자 "추가"는 기존 명단에 새 사람을 합친 전체 목록으로 보내야
-  한다 — 새 사람만 보내면 기존 참가자가 전부 빠진다."""
+  한다 — 새 사람만 보내면 기존 참가자가 전부 빠진다.
+- ★ 옮길 일정과 옮길 시점이 대화에 이미 있으면 **되묻지 말고 schedule_update 로
+  곧장 실행하라.** "며칠로 옮길까요?" 처럼 되묻는 건 사용자가 이미 답한 것을 또
+  묻는 것이다 — 날짜가 "복귀 이후"처럼 범위로만 주어졌으면 그 범위의 첫 근무일을
+  네가 정해서 진행하고, 정한 날짜를 답변에 밝혀라.
+- ★ 휴가로 등록된 일정(isLeave)은 수정할 수 없다. 옮겨 달라는 요청을 받으면
+  휴가 일정 말고 **그 기간에 걸친 회의·미팅 일정**을 대상으로 삼아라."""
 
 # ── 지출 에이전트 ──────────────────────────────────────────
 EXPENSE_PROMPT = """당신은 그룹웨어의 지출·예산 담당 에이전트입니다.
@@ -173,19 +183,19 @@ async def get_task_agent():
     return await _get("task", [user_me, project_search, task_list, task_due_within, task_create,
                                task_toggle_status, task_update, schedule_list, meeting_list,
                                analyze_impact, recall, doc_search, ask_user, navigate], TASK_PROMPT,
-                      "할일 등록/변경 요청입니다.")
+                      "할 일 등록/변경")
 
 
 async def get_schedule_agent():
     return await _get("schedule", [user_me, user_search, project_members, schedule_list,
                                    schedule_create, schedule_update, analyze_impact, recall, doc_search, ask_user, navigate],
-                      SCHEDULE_PROMPT, "일정 등록/변경 요청입니다.")
+                      SCHEDULE_PROMPT, "일정 등록/변경")
 
 
 async def get_expense_agent():
     return await _get("expense", [user_me, project_search, budget_summary, expense_list,
                                   expense_create, analyze_impact, recall, doc_search, ask_user, navigate], EXPENSE_PROMPT,
-                      "지출 등록 요청입니다.")
+                      "지출 등록")
 
 
 async def get_mail_agent():
@@ -200,7 +210,7 @@ async def get_mail_agent():
 
     tools = [user_me, ask_user, analyze_impact, *await get_gmail_tools()]
     agent = build_domain_agent(tools, MAIL_PROMPT, await get_checkpointer(),
-                               description_prefix="메일 조회/발송 요청입니다.")
+                               description_prefix="메일 조회/발송")
     if any(getattr(t, "name", "").startswith("gmail_") for t in tools):
         _agents["mail"] = agent
     return agent

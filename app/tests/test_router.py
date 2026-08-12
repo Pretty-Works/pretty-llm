@@ -19,6 +19,13 @@ import uuid
 
 import httpx
 
+# ★ 회귀는 항상 mock 으로 돈다 — .env 가 MOCK_BACKEND=false 여도 강제한다.
+#   이 스위트들은 승인까지 태워 실제로 저장을 실행하므로(회의록·연차·할일),
+#   실 BE 를 보게 두면 테스트를 돌릴 때마다 진짜 데이터가 쌓이고 연차는
+#   승인자에게 알림까지 나간다. conftest 는 pytest 전용이라 여기엔 안 걸린다.
+import os  # noqa: E402
+os.environ["MOCK_BACKEND"] = "true"
+
 from app.config import settings
 from app.main import app
 
@@ -76,7 +83,7 @@ async def _scenarios() -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test",
                                  timeout=90,
-                                 headers={"X-Internal-Api-Key": settings.internal_api_key}) as client:
+                                 headers={"X-Internal-Api-Key": settings.inbound_api_key}) as client:
 
         # ── ② simple_query — 승인 없이 done ──────────────────
         events = await _collect_sse(client, "/api/agent/runs",
