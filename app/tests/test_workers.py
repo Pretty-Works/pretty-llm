@@ -146,6 +146,70 @@ async def test_참여자_밖_id는_조회하지_않고_기록만_남긴다(proje
     assert any("999" in item for item in context.missing)
 
 
+async def test_me_도메인은_본인_데이터만_싣는다(request_p001, monkeypatch):
+    """★ 배포 사고가 난 질문("뭐부터 할까")이 원래 갔어야 할 경로.
+
+    본인 스코프 내부도구만 쓰므로 후보군·프로젝트 참여자가 섞이지 않는다.
+    """
+    from app.engine_b.context_builder import render_context
+    from app.tools import hr_tool
+
+    async def my_tasks(week_offset: int = 0):
+        return {
+            "week_start": "2026-07-27", "week_end": "2026-08-02",
+            "tasks": [{"id": 58, "title": "API 명세 정리", "due_date": "2026-07-24",
+                       "status": "TODO", "project_id": 1001}],
+        }
+
+    monkeypatch.setattr(hr_tool, "fetch_my_tasks", my_tasks)
+    monkeypatch.setattr(hr_tool, "fetch_my_leave_balance",
+                        lambda year=None: _async({"granted": 15, "used": 3, "remaining": 12}))
+    monkeypatch.setattr(hr_tool, "fetch_my_schedules", lambda f, t: _async([]))
+
+    plan = AnalysisPlan(domains=["me"], focus=["my_week"])
+    context = await build_context(plan, request_p001)
+
+    assert context.my_week is not None
+    assert context.my_week.leave_remaining_days == 12
+    assert [t.id for t in context.my_week.tasks] == [58]
+    assert context.candidates == []          # 남의 데이터가 섞일 경로가 없다
+
+    text = render_context(context, ("my_week",))
+    assert "내 이번 주" in text and "D+3 지연" in text
+
+
+def _async(value):
+    """monkeypatch 용 — 코루틴으로 감싼다."""
+    async def _wrapped(*args, **kwargs):
+        return value
+    return _wrapped()
+
+
+def test_라우터_프롬프트에_픽스처_값이_없다():
+    """★ 회귀 — few-shot 의 '이민주'가 매 라우팅 호출마다 모델 컨텍스트에 실렸다.
+
+    예시 값은 자리표시자여야 한다. 픽스처 인물·프로젝트명이 예시에 있으면
+    모델이 실제 질문에 없는 대상을 그대로 가져다 쓸 여지가 생긴다.
+    이름을 다른 이름으로 바꾸는 건 방어가 아니다 — 이 테스트가 방어다.
+    """
+    from app.prompts import analysis_router
+    from app.tools import demo_data
+
+    text = analysis_router.SYSTEM + analysis_router.build_few_shot_text()
+    leaked = [u["name"] for u in demo_data.USERS if u["name"] in text]
+    leaked += [p["name"] for p in demo_data.PROJECTS if p["name"] in text]
+
+    assert not leaked, f"라우터 프롬프트에 픽스처 값이 들어 있다: {leaked}"
+
+
+def test_라우터_프롬프트가_예시값_사용을_금지한다():
+    """자리표시자라는 사실을 모델에게 명시해야 한다. 문구가 빠지면 예시가 곧 정답이 된다."""
+    from app.prompts import analysis_router
+
+    assert "자리표시자" in analysis_router.SYSTEM
+    assert "entities 를 **비워 둔다**" in analysis_router.SYSTEM
+
+
 def test_데이터게이트가_근거없는_축을_건너뛴다():
     """근거가 없으면 워커를 돌리지 않는다 — 예전에는 '도구로 직접 찾아라'고 넘겼다."""
     from app.engine_b.context_builder import apply_data_gate, skipped_dimensions
@@ -153,7 +217,9 @@ def test_데이터게이트가_근거없는_축을_건너뛴다():
     context = AnalysisContext(as_of=AS_OF)      # 프로젝트·예산·후보 전부 없음
     apply_data_gate(context)
 
-    assert skipped_dimensions(context) == {"priority", "risk", "cost", "skill_fit", "workload"}
+    assert skipped_dimensions(context) == {
+        "priority", "risk", "cost", "skill_fit", "workload", "my_week"
+    }
 
 
 async def test_대상이_없으면_참여중인_프로젝트로_떨어진다(request_p001):
@@ -238,6 +304,58 @@ def test_마감일을_임의로_바꾸면_잡는다(context_p001):
 
 
 # ─── Validator - risk ─────────────────────────────────────────────
+
+def test_한_칸에_여러_대상을_적어도_오탐하지_않는다(context_p001):
+    """★ 회귀 — 앞 5글자만 잘라 비교하던 탓에 실제 존재하는 할 일을 '없다'고 잡았다.
+
+    한 위험이 여러 할 일에 걸리는 건 정상이라 모델은 이렇게 몰아서 적는다.
+    """
+    output = _output(
+        "risk",
+        {
+            "overall_risk_score": 60,
+            "risks": [
+                {
+                    "category": "schedule",
+                    "title": "일정 위험",
+                    "subject": "todo:101, todo:102, todo:106",   # 셋 다 p001 에 실재한다
+                    "likelihood": 80,
+                    "impact": 50,
+                    "risk_score": 40,
+                    "mitigation": "담당 재배분",
+                }
+            ],
+        },
+    )
+    report = validate([output], context_p001)
+
+    assert "UNKNOWN_SUBJECT" not in _codes(report)
+
+
+def test_여러_대상_중_없는_것만_골라_잡는다(context_p001):
+    output = _output(
+        "risk",
+        {
+            "overall_risk_score": 60,
+            "risks": [
+                {
+                    "category": "schedule",
+                    "title": "일정 위험",
+                    "subjects": ["todo:101", "todo:9999"],
+                    "likelihood": 80,
+                    "impact": 50,
+                    "risk_score": 40,
+                    "mitigation": "담당 재배분",
+                }
+            ],
+        },
+    )
+    report = validate([output], context_p001)
+
+    unknown = [v for v in report.violations if v.code == "UNKNOWN_SUBJECT"]
+    assert len(unknown) == 1
+    assert unknown[0].subject == "todo:9999"
+
 
 def test_위험점수_계산이_틀리면_잡는다(context_p001):
     output = _output(
@@ -673,7 +791,9 @@ def test_모든_워커는_결과스키마와_프롬프트를_갖는다():
             continue  # 자체 구현 워커는 프롬프트·도구를 쓰지 않는다
         assert spec.role.strip(), f"{spec.dimension} 역할 프롬프트 없음"
         assert spec.method.strip(), f"{spec.dimension} 판단절차 프롬프트 없음"
-        assert spec.tools, f"{spec.dimension} 에 도구가 없음"
+        # my_week 는 일부러 도구가 없다 — 컨텍스트가 곧 전부라 더 찾아 헤맬 곳이 없어야 한다.
+        if spec.dimension != "my_week":
+            assert spec.tools, f"{spec.dimension} 에 도구가 없음"
 
 
 def test_그래프가_조립된다():

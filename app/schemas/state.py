@@ -30,6 +30,7 @@ class Domain(StrEnum):
 
     project = "project"    # 담당자 2
     hcm = "hcm"            # 담당자 2
+    me = "me"              # 본인 스코프 전용 — 내 할 일·일정·잔여연차만 본다
     meeting = "meeting"    # 담당자 3
     vacation = "vacation"  # Engine A 에서 위험 신호가 잡혔을 때 넘어온다
     expense = "expense"    # 어휘에만 있고 Engine B 워커는 없다
@@ -154,6 +155,26 @@ class TodoSnapshot(BaseModel):
         return self.status in {"TODO", "IN_PROGRESS"}
 
 
+class MyWeekSnapshot(BaseModel):
+    """요청자 본인의 주간 스냅샷.
+
+    전부 본인 스코프 내부도구다 (`/me`, `/tasks`, `/schedules`, `/leaves/balance`).
+    남의 데이터가 섞일 여지가 없어 이 축은 개인정보 판단이 필요 없다.
+    """
+
+    week_start: date | None = None
+    week_end: date | None = None
+    tasks: list[TodoSnapshot] = Field(default_factory=list)
+    schedules: list[dict[str, Any]] = Field(default_factory=list)
+    leave_granted_days: int | None = None
+    leave_used_days: int | None = None
+    leave_remaining_days: int | None = None
+
+    @property
+    def open_tasks(self) -> list[TodoSnapshot]:
+        return [t for t in self.tasks if t.is_open]
+
+
 class MilestoneSnapshot(BaseModel):
     """마일스톤 1건. 일정 판단의 1차 근거다 — 할 일과 달리 기간 제약 없이 전체를 받는다."""
 
@@ -263,6 +284,8 @@ class AnalysisContext(BaseModel):
     candidates: list[MemberSnapshot] = Field(default_factory=list)
     # Data Gate 가 근거 부족으로 건너뛴 축. 그대로 답변의 "확인 못한 것"이 된다.
     skipped: list[str] = Field(default_factory=list)
+    # 본인 스코프 질문("뭐부터 할까")일 때만 채워진다. me 도메인 전용.
+    my_week: "MyWeekSnapshot | None" = None
     # app.tools.hr_tool.compute_workload() 결과. 셀 수 있는 부하 지표는
     # LLM 이 아니라 코드가 계산해서 넣는다. (hcm 도메인일 때만 채워진다)
     workloads: list[dict[str, Any]] = Field(default_factory=list)
@@ -375,6 +398,10 @@ class ValidationReport(BaseModel):
             if violation.dimension and violation.dimension not in seen:
                 seen.append(violation.dimension)
         return seen
+
+    def dimensions_with_errors(self) -> set[str]:
+        """error 가 남은 축. 재시도로도 못 고쳤으면 통합에서 제외된다."""
+        return {v.dimension for v in self.errors if v.dimension}
 
     def feedback_by_dimension(self) -> dict[str, list[str]]:
         feedback: dict[str, list[str]] = {}

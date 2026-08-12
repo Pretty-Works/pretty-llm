@@ -26,8 +26,9 @@ RiskCategory = Literal["schedule", "resource", "scope", "quality", "cost", "exte
 class RiskItem(LenientModel):
     category: RiskCategory = "schedule"
     title: str = Field(default="", description="위험을 한 줄로")
-    subject: str = Field(
-        default="", description="지목 대상. 'todo:101', 'user:2' 처럼 식별자로"
+    subjects: list[str] = Field(
+        default_factory=list,
+        description="지목 대상 식별자. ['todo:101', 'todo:106'] 처럼 한 칸에 하나씩",
     )
     likelihood: int = Field(default=50, description="발생 가능성 0~100")
     impact: int = Field(default=50, description="발생 시 타격 0~100")

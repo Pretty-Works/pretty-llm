@@ -21,6 +21,7 @@ from app.schemas.state import (
     MeetingSnapshot,
     MemberSnapshot,
     MilestoneSnapshot,
+    MyWeekSnapshot,
     ProjectSnapshot,
     ScenarioSpec,
     TodoSnapshot,
@@ -70,6 +71,11 @@ async def build_context(plan: AnalysisPlan, request: AnalysisRequest) -> Analysi
     if "hcm" in plan.domains or "vacation" in plan.domains:
         await _load_people(plan, context, window_from, window_to)
 
+    if "me" in plan.domains:
+        context.my_week = await _load_my_week(context, window_from, window_to)
+        if context.my_week is None:
+            context.missing.append("내 주간 정보 조회 실패")
+
     apply_data_gate(context)
 
     log.info(
@@ -99,6 +105,7 @@ _DIMENSION_NEEDS: dict[str, tuple[str, str]] = {
     "cost": ("budgets", "예산 정보"),
     "skill_fit": ("candidates", "프로젝트 참여자"),
     "workload": ("candidates", "프로젝트 참여자"),
+    "my_week": ("my_week", "내 주간 정보"),
 }
 
 
@@ -246,6 +253,38 @@ async def _load_budget(project_id: int) -> BudgetSnapshot | None:
         spent=int(raw.get("spent", 0) or 0),
         committed=int(raw.get("committed", 0) or 0),
         currency=raw.get("currency", "KRW"),
+    )
+
+
+async def _load_my_week(
+    context: AnalysisContext, window_from: date, window_to: date
+) -> MyWeekSnapshot | None:
+    """요청자 본인의 주간 스냅샷. 전부 본인 스코프 내부도구라 남의 데이터가 섞일 수 없다."""
+    weekly = await hr_tool.fetch_my_tasks()
+    if weekly is None:
+        return None
+
+    balance = await hr_tool.fetch_my_leave_balance(context.as_of.year) or {}
+    schedules = await hr_tool.fetch_my_schedules(window_from, window_to)
+
+    return MyWeekSnapshot(
+        week_start=parse_date(weekly.get("week_start")),
+        week_end=parse_date(weekly.get("week_end")),
+        tasks=[
+            TodoSnapshot(
+                id=t["id"],
+                project_id=t.get("project_id"),
+                title=t.get("title", ""),
+                status=t.get("status", "TODO"),
+                due_date=parse_date(t.get("due_date")),
+            )
+            for t in weekly.get("tasks", [])
+            if t.get("id") is not None
+        ],
+        schedules=schedules,
+        leave_granted_days=balance.get("granted"),
+        leave_used_days=balance.get("used"),
+        leave_remaining_days=balance.get("remaining"),
     )
 
 
@@ -416,7 +455,7 @@ def _member_from_user(user: dict[str, Any] | None) -> MemberSnapshot | None:
 # 워커별로 필요한 섹션만 넣어 토큰을 아낀다.
 ALL_SECTIONS = (
     "project", "milestones", "todos", "members", "meetings",
-    "budget", "leaves", "workload", "candidates",
+    "budget", "leaves", "workload", "candidates", "my_week",
 )
 
 
@@ -582,6 +621,34 @@ def render_context(
         lines.append(
             "이 표 밖의 사람은 존재 여부조차 알 수 없다. 다른 이름을 만들어내지 마라."
         )
+
+    if "my_week" in wanted and context.my_week:
+        week = context.my_week
+        lines += ["", f"## 내 이번 주 ({week.week_start} ~ {week.week_end})"]
+        if week.leave_remaining_days is not None:
+            lines.append(
+                f"- 연차: 부여 {week.leave_granted_days} / 사용 {week.leave_used_days} "
+                f"/ 남음 {week.leave_remaining_days}일"
+            )
+        if week.tasks:
+            lines += ["", "| id | 제목 | 상태 | 마감 | D-day |", "|---|---|---|---|---|"]
+            for task in sorted(
+                week.tasks, key=lambda t: (t.due_date is None, t.due_date or context.as_of)
+            ):
+                d_day = (task.due_date - context.as_of).days if task.due_date else None
+                d_text = "-" if d_day is None else (f"D+{-d_day} 지연" if d_day < 0 else f"D-{d_day}")
+                lines.append(
+                    f"| {task.id} | {task.title} | {task.status} "
+                    f"| {task.due_date or '-'} | {d_text} |"
+                )
+        else:
+            lines.append("- 이번 주 할 일 없음")
+        if week.schedules:
+            lines.append("")
+            lines += [
+                f"- 일정: {s.get('title')} {s.get('start_at')} ~ {s.get('end_at')}"
+                for s in week.schedules[:10]
+            ]
 
     if context.missing:
         lines += ["", "## 확보하지 못한 정보 (없는 값을 추정으로 채우지 말 것)"]

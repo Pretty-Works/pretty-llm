@@ -28,6 +28,14 @@ _INTERNAL_ONLY = [Depends(verify_internal_api_key)]
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print(f"[startup] app={settings.app_name} debug={settings.debug}")
+    # 데이터 출처를 기동 때 반드시 찍는다 — 이게 안 보여서 배포가 픽스처로 도는 걸
+    # 아무도 몰랐다(2026-08-11). 픽스처 모드면 눈에 띄게 경고한다.
+    status = settings.data_source_status()
+    print(f"[startup] data={status}")
+    if status["mode"] == "fixtures":
+        print("[startup] ⚠ 픽스처 모드 — 백엔드를 호출하지 않는다. MOCK_BACKEND 를 확인할 것")
+    elif not status["internalApiKeySet"]:
+        print("[startup] ⚠ INTERNAL_API_KEY 미설정 — 백엔드 조회가 전부 401 로 실패한다")
     yield
     # sqlite 커넥션(체크포인트·기억 카드)을 닫는다. aiosqlite 는 커넥션마다
     # 비데몬 스레드를 띄우므로, 안 닫으면 파이썬이 종료를 못 하고 컨테이너
@@ -96,5 +104,10 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/health")
 def health() -> dict:
-    """서버 생존 확인용. 배포/모니터링에서 이걸 찌른다."""
-    return {"status": "ok", "app": settings.app_name}
+    """서버 생존 확인용. 배포/모니터링에서 이걸 찌른다.
+
+    data 를 같이 낸다 — 살아있는지만 알려주고 무엇을 읽고 있는지 안 알려주면,
+    픽스처로 도는 서버도 똑같이 ok 로 보인다. 키 값은 싣지 않는다(설정 여부만).
+    """
+    return {"status": "ok", "app": settings.app_name,
+            "data": settings.data_source_status()}
