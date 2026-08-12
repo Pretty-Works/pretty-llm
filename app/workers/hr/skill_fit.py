@@ -64,5 +64,5 @@ SPEC = WorkerSpec(
     result_model=SkillFitResult,
     # 프로젝트 범위 도구만 준다. 전사 명부·타인 이력 조회 도구는 제거됐다.
     tools=(find_user, list_project_members, list_project_tasks),
-    context_sections=("project", "todos", "members", "candidates", "leaves"),
+    context_sections=("project", "todos", "members", "meetings", "candidates", "leaves"),
 )

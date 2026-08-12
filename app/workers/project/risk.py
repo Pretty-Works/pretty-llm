@@ -58,5 +58,5 @@ SPEC = WorkerSpec(
     result_model=RiskResult,
     tools=(*PROJECT_TOOLS, get_project_budget, list_member_leaves),
     async_tools=get_gmail_read_tools,
-    context_sections=("project", "todos", "members", "budget", "leaves", "workload"),
+    context_sections=("project", "milestones", "todos", "members", "meetings", "budget", "leaves", "workload"),
 )

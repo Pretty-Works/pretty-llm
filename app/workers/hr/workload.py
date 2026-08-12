@@ -75,5 +75,5 @@ SPEC = WorkerSpec(
     method=prompt.METHOD,
     result_model=WorkloadResult,
     tools=(list_member_leaves, find_user, list_project_tasks),
-    context_sections=("project", "todos", "members", "workload", "leaves"),
+    context_sections=("project", "milestones", "todos", "members", "workload", "leaves"),
 )

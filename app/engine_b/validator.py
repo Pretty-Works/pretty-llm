@@ -48,6 +48,7 @@ def validate(
         "cost": _check_cost,
         "skill_fit": _check_skill_fit,
         "workload": _check_workload,
+        "followup": _check_followup,
     }
 
     for output in outputs:
@@ -239,6 +240,65 @@ def _check_priority(
 
 
 # ─── risk ─────────────────────────────────────────────────────────
+
+# ─── followup ─────────────────────────────────────────────────────
+
+def _check_followup(
+    output: WorkerOutput, context: AnalysisContext, report: ValidationReport
+) -> None:
+    """회의록에 없는 약속을 만들거나, 없는 할 일에 연결하는 것을 막는다."""
+    known_todos = context.known_todo_ids()
+    known_meetings = {str(m.id) for p in context.projects for m in p.meetings}
+
+    for item in output.result.get("items") or []:
+        what = str(item.get("what", "")).strip()
+        if not what:
+            continue
+
+        meeting_id = str(item.get("meeting_id") or "")
+        if meeting_id and meeting_id not in known_meetings:
+            _add(
+                report,
+                output,
+                "UNKNOWN_SUBJECT",
+                f"'{what}' 이 존재하지 않는 회의({meeting_id})를 근거로 든다.",
+                "컨텍스트의 회의록만 근거로 삼아라.",
+                subject=f"meeting:{meeting_id}",
+            )
+
+        for task_id in item.get("matched_task_ids") or []:
+            if str(task_id) not in known_todos:
+                _add(
+                    report,
+                    output,
+                    "UNKNOWN_TASK",
+                    f"'{what}' 이 존재하지 않는 할 일({task_id})에 연결됐다.",
+                    "컨텍스트에 있는 할 일 id 만 연결하라. 없으면 UNTRACKED 로 두면 된다.",
+                    subject=f"todo:{task_id}",
+                )
+
+        # UNTRACKED 인데 할 일을 연결했거나, TRACKED 인데 연결이 없으면 판정이 모순이다.
+        status = item.get("status")
+        matched = bool(item.get("matched_task_ids"))
+        if status == "UNTRACKED" and matched:
+            _add(
+                report,
+                output,
+                "STATUS_CONFLICT",
+                f"'{what}' 이 UNTRACKED 인데 할 일이 연결돼 있다.",
+                "대응 할 일이 있으면 TRACKED 또는 STALLED 다.",
+                subject=what,
+            )
+        if status in {"TRACKED", "STALLED"} and not matched:
+            _add(
+                report,
+                output,
+                "STATUS_CONFLICT",
+                f"'{what}' 이 {status} 인데 연결된 할 일이 없다.",
+                "대응 할 일이 없으면 UNTRACKED 다.",
+                subject=what,
+            )
+
 
 _SUBJECT_REF = re.compile(r"(todo|user):(\d+)")
 

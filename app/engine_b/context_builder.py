@@ -115,6 +115,10 @@ def apply_data_gate(context: AnalysisContext) -> None:
         if not getattr(context, field, None):
             context.skipped.append(f"{dimension}: {label}를 확보하지 못해 분석하지 않음")
 
+    # followup 은 회의록이 근거의 전부다. 회의록은 프로젝트 안에 있어 위 반복으로 못 잡는다.
+    if not any(p.meetings for p in context.projects):
+        context.skipped.append("followup: 회의록을 확보하지 못해 분석하지 않음")
+
     if context.projects and not any(p.milestones for p in context.projects):
         context.missing.append(
             "마일스톤 없음 — 일정 판단 근거가 할 일뿐이다. 진척률을 단정하지 말 것"

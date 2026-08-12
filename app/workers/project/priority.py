@@ -53,5 +53,5 @@ SPEC = WorkerSpec(
     result_model=PriorityResult,
     tools=tuple(PROJECT_TOOLS),
     async_tools=get_gmail_read_tools,
-    context_sections=("project", "todos", "members"),
+    context_sections=("project", "milestones", "todos", "members", "meetings"),
 )

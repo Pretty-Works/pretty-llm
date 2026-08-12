@@ -210,6 +210,61 @@ def test_라우터_프롬프트가_예시값_사용을_금지한다():
     assert "entities 를 **비워 둔다**" in analysis_router.SYSTEM
 
 
+# ─── Validator - followup ─────────────────────────────────────────
+
+def test_회의록이_컨텍스트에_실린다(context_p001):
+    """BE 가 주는데 Engine B 가 안 쓰던 데이터 — 이제 근거로 쓴다."""
+    project = context_p001.project(1001)
+
+    assert len(project.meetings) == 2
+    assert any(m.follow_up for m in project.meetings), "후속 조치가 비어 있으면 followup 축이 못 돈다"
+
+    text = render_context(context_p001, ("meetings",))
+    assert "최근 회의록" in text and "후속 조치" in text
+
+
+def test_없는_할일에_후속조치를_연결하면_잡는다(context_p001):
+    output = _output(
+        "followup",
+        {"items": [{"what": "권한 매트릭스 재검토", "meeting_id": 5001,
+                    "status": "TRACKED", "matched_task_ids": [9999]}]},
+    )
+    report = validate([output], context_p001)
+
+    assert "UNKNOWN_TASK" in _codes(report)
+
+
+def test_후속조치_판정이_모순이면_잡는다(context_p001):
+    """UNTRACKED 인데 할 일이 연결돼 있으면 판정이 스스로 어긋난다."""
+    output = _output(
+        "followup",
+        {"items": [{"what": "결재선 화면 개편 마무리", "meeting_id": 5001,
+                    "status": "UNTRACKED", "matched_task_ids": [102]}]},
+    )
+    report = validate([output], context_p001)
+
+    assert "STATUS_CONFLICT" in _codes(report)
+
+
+def test_정상적인_후속조치_추적은_통과한다(context_p001):
+    output = _output(
+        "followup",
+        {
+            "summary": "회의 2건에서 실행 항목 3건, 그 중 미등록 1건",
+            "items": [
+                {"what": "결재선 화면 개편 마무리", "meeting_id": 5001,
+                 "status": "TRACKED", "matched_task_ids": [102]},
+                {"what": "권한 매트릭스 재검토", "meeting_id": 5001,
+                 "status": "UNTRACKED", "matched_task_ids": []},
+            ],
+            "tracked_count": 2,
+        },
+    )
+    report = validate([output], context_p001)
+
+    assert report.ok
+
+
 def test_프로덕션_코드는_픽스처를_임포트하지_않는다():
     """★ 사고의 근본 원인 — 프로덕션 조회 경로가 픽스처로 폴백했다.
 
@@ -244,7 +299,7 @@ def test_데이터게이트가_근거없는_축을_건너뛴다():
     apply_data_gate(context)
 
     assert skipped_dimensions(context) == {
-        "priority", "risk", "cost", "skill_fit", "workload", "my_week"
+        "priority", "risk", "cost", "followup", "skill_fit", "workload", "my_week"
     }
 
 
@@ -776,12 +831,12 @@ def test_도메인을_고르면_그_세트가_전부_실행대상이_된다():
     """focus 는 강조점일 뿐 실행 여부와 무관하다 - 설계 원칙."""
     specs = registry.specs_for_domains(["project"])
 
-    assert {s.dimension for s in specs} == {"priority", "risk", "cost"}
+    assert {s.dimension for s in specs} == {"priority", "risk", "cost", "followup"}
 
 
-def test_두_도메인을_고르면_다섯_워커가_돈다():
+def test_두_도메인을_고르면_여섯_워커가_돈다():
     specs = registry.specs_for_domains(["project", "hcm"])
-    assert len(specs) == 5
+    assert len(specs) == 6
 
 
 def test_아직_없는_도메인은_조용히_건너뛴다():
