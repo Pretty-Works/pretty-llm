@@ -17,13 +17,24 @@ Replan 저장/반영 계약 — BE 실제 구현(2026-08-09 스펙 전면 개정
 ★ path 변수(projectId·replanId)는 본문에도 그대로 담아야 한다 — 승인 토큰이 본문 해시로
   봉인되므로, 경로만으로 대상을 정하면 승인 때와 다른 프로젝트로 보내도 해시가 그대로다.
 
+★ 2026-08-12 — operation 별 필수 필드(BE 명세 §3 표)를 모델 레벨에서 강제한다.
+  이전엔 from_/to/milestoneId/taskId/memberId/content/expectedContent 가 전부
+  Optional 이라, apply_builder.py 가 before/after 에서 값을 못 찾아도(예: LLM이
+  proposed_changes.before 를 안 채운 경우) None 인 채로 조용히 통과해 BE 로
+  나갔다 — BE 는 그 자리에서 REPLAN_004/005 로 뒤늦게 거부하지만, 그때는 이미
+  승인 카드까지 띄운 뒤라 사용자 경험이 나쁘다. 특히 `from`은 BE 팀 체크리스트가
+  "붙이는 동안 가장 자주 나는 에러"라고 꼽은 지점이라, 여기서(단일 출처인 Pydantic
+  모델에서) 미리 막아 apply_builder.build_operations()의 기존 rejected 경로로
+  조기에 걸러지게 한다(그 조정안은 build_operations 가 이미 하던 대로 통째로
+  보류되고, propose_replan_scenarios 결과 텍스트에도 안 실린다).
+
 Pydantic v2.
 """
 from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ScenarioType = Literal["REALLOCATE", "EXTEND", "REDUCE_SCOPE"]
 RiskLevel = Literal["LOW", "MEDIUM", "HIGH"]
@@ -36,6 +47,17 @@ OperationType = Literal[
     "TASK_CREATE",
     "TASK_DELETE",
 ]
+
+# operation → 필수 필드 (BE 명세 §3 "필수 필드" 열 그대로, 단일 출처).
+# 필드 이름은 파이썬 속성명 기준(from 은 alias 라 from_ 로 적는다).
+_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "PROJECT_TARGET_DATE_CHANGE": ("from_", "to"),
+    "PROJECT_MEMBER_ADD": ("memberId",),
+    "MILESTONE_TARGET_DATE_CHANGE": ("milestoneId", "from_", "to"),
+    "TASK_DUE_DATE_CHANGE": ("taskId", "from_", "to"),
+    "TASK_CREATE": ("content", "to"),
+    "TASK_DELETE": ("taskId", "expectedContent"),
+}
 
 
 class ReplanOperation(BaseModel):
@@ -51,6 +73,11 @@ class ReplanOperation(BaseModel):
     ★ 표에 없는 건 못 한다: 담당자 재배정(TASK_DELETE+TASK_CREATE 조합으로 표현),
       프로젝트 시작일/예산/이름 변경, 마일스톤 추가/삭제, 참여자 제외 — 전부 불가능한
       operation 이라 아예 만들면 안 된다(app/engine_b/apply_builder.py 가 걸러낸다).
+
+    ★ 위 표의 "필수 필드"는 아래 model_validator 가 강제한다 — 누락되면 이
+      ReplanOperation 생성 자체가 ValidationError 로 실패하고, apply_builder.py의
+      build_operations() 가 이미 그 예외를 잡아 해당 조정안 전체를 rejected 로
+      보류한다(부분 적용 없음, 이 파일의 기존 원칙과 동일).
     """
     model_config = ConfigDict(populate_by_name=True)
 
@@ -69,6 +96,21 @@ class ReplanOperation(BaseModel):
     toAssigneeId: int | None = None
     # TASK_DELETE — 하드 삭제라 내용까지 대조한다(되돌릴 수 없어서)
     expectedContent: str | None = None
+
+    @model_validator(mode="after")
+    def _check_required_fields(self) -> "ReplanOperation":
+        missing = [
+            f for f in _REQUIRED_FIELDS.get(self.operation, ())
+            if getattr(self, f) in (None, "")
+        ]
+        if missing:
+            names = [("from" if f == "from_" else f) for f in missing]
+            raise ValueError(
+                f"{self.operation} 에 필수 필드 누락: {names} — BE 명세 §3 표를 "
+                "참고해 채워야 한다(특히 from 은 계획 당시 조회한 현재 값을 그대로 "
+                "담아야 충돌 검증이 된다)"
+            )
+        return self
 
 
 class ReplanScenario(BaseModel):

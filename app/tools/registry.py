@@ -67,6 +67,7 @@ AUTO_ALLOWED: frozenset[str] = frozenset({
     "task.create",
     "task.toggleStatus",         # 토글이라 원복
     "milestone.toggleStatus",
+    "replan.save",               # 제안 저장 — 실 데이터 변경 없음
 })
 
 AUTO_FORBIDDEN: frozenset[str] = frozenset({
@@ -78,6 +79,7 @@ AUTO_FORBIDDEN: frozenset[str] = frozenset({
                                               #   되는 시점이라 사람이 한 번 본다.
     "replan.apply",                          # 배치 반영 + 여러 구성원에게 알림
     "gmail.send",                            # 상대방에게 실제 메일이 나감 — 되돌릴 수 없음
+    "replan.apply",                          # 배치 반영 + 여러 구성원에게 알림
 })
 
 
@@ -162,6 +164,10 @@ WRITE_TOOLS: dict[str, dict] = {
         #   다른 프로젝트로 보내도 해시가 그대로다). path.format(**args) 는 args 에 있는
         #   키만 쓰므로 projectId 가 params 에도 남아 있어도 문제없다.
         "path_params": (),
+        "catalog": "replan.save",           # 제안 저장 — 실 데이터 변경 없음(승인 불필요)
+        "method": "POST",
+        "path": "/projects/{projectId}/replans",
+        "path_params": ("projectId",),
     },
     "replan_apply": {
         "catalog": "replan.apply",          # AUTO_FORBIDDEN — 저장분에서 꺼내 반영(승인 필요)
@@ -182,6 +188,7 @@ WRITE_TOOLS: dict[str, dict] = {
 MCP_WRITE_TOOLS: dict[str, dict] = {
     "gmail_send_email": {
         "catalog": "gmail.send",   # AUTO_FORBIDDEN — 상대방에게 실제 메일이 나가는 되돌릴 수 없는 행동
+        "path_params": ("projectId", "replanId"),
     },
 }
 

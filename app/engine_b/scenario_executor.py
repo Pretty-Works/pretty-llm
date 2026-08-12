@@ -36,7 +36,7 @@ from app.schemas.state import (
 #     ★ 2026-08-09 BE 스펙 개정 — scenarioType 값이 대문자 3종(REALLOCATE/EXTEND/
 #       REDUCE_SCOPE)으로 확정됐다. 예전엔 extend/add_resource/reduce_scope 소문자였다.
 SCENARIO_LABELS = {
-    "EXTEND": "일정 조정",
+    "EXTEND": "일정 연장",
     "REALLOCATE": "인력 재배치",
     "REDUCE_SCOPE": "범위 축소",
 }
