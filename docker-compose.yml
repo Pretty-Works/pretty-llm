@@ -14,3 +14,16 @@ services:
       # resume(AGENT_016)이 전부 깨진다. 파일 sqlite 를 쓰는 이유.
       - ./data:/app/data
     restart: unless-stopped
+
+  gmail-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.gmail-mcp
+    container_name: pretty-llm-gmail-mcp
+    env_file:
+      - .env
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./gmail-data:/app/data
+    restart: unless-stopped
