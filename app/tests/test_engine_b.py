@@ -160,7 +160,7 @@ async def _scenarios() -> None:
                                     {"questionId": 1, "selectedIds": [options[0]["id"]],
                                      "text": options[0]["label"]})
         names = [n for n, _ in events]
-        # 선택 직후엔 저장(replan.save) 승인이 먼저 뜬다 — 혹시 재확인 질문이 한 번
+        # 선택 직후엔 저장(replan.create) 승인이 먼저 뜬다 — 혹시 재확인 질문이 한 번
         # 더 왔다면 같은 선택으로 한 번 더 밀어준다.
         hops = 0
         while names[-1] == "question" and hops < 2:
@@ -171,7 +171,7 @@ async def _scenarios() -> None:
             hops += 1
         assert names[-1] == "approval_request", f"선택 후 approval_request 가 아님: {names} / {events[-1]}"
         approval = events[-1][1]
-        assert approval["tool"] == "replan.save", approval["tool"]
+        assert approval["tool"] == "replan.create", approval["tool"]
         assert approval["access"] == "WRITE", approval
         print(f"✅ ⑤-2 선택 → 저장 승인 요청: tool={approval['tool']} summary={approval['summary']!r}",
               flush=True)
