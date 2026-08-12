@@ -28,20 +28,28 @@ class PriorityItem(LenientModel):
     score: int = Field(default=50, description="0~100. 클수록 먼저 해야 한다.")
     due_date: str | None = None
     is_overdue: bool = False
-    blocks: list[str] = Field(
-        default_factory=list, description="이 일이 끝나야 진행되는 다른 할 일 id"
-    )
-    rationale: str = Field(default="", description="이 순위인 이유 1~2문장")
+    rationale: str = Field(default="", description="이 순위인 이유 1~2문장. 날짜로 설명할 것")
 
 
 class PriorityResult(LenientModel):
+    """★ 2026-08-11 정리.
+
+    `blocks`(할 일 간 의존 관계)를 제거했다 — DB 에 의존 관계 컬럼이 없어서 모델이
+    제목만 보고 지어내던 필드였다. 근거 없는 값을 내놓느니 안 내놓는 게 낫다.
+    """
+
     ranked: list[PriorityItem] = Field(
-        default_factory=list, description="열려 있는 할 일 전체를 우선순위 순으로"
+        default_factory=list,
+        description="**컨텍스트에 실린** 열린 할 일을 우선순위 순으로. 전사·전체가 아니다",
+    )
+    scope_note: str = Field(
+        default="",
+        description="이 순위가 어느 범위인지 한 줄. 예: '이번 주 기준, p1001 프로젝트 할 일'",
     )
     top_focus: str = Field(default="", description="지금 당장 손대야 할 것 한 줄 요약")
     deprioritizable: list[str] = Field(
         default_factory=list,
-        description="이번 사이클에서 빼도 되는 할 일 id. 없으면 빈 배열",
+        description="마감이 멀어 이번 사이클에서 미룰 수 있는 할 일 id. 사업 판단이 아니라 날짜 판단이다",
     )
 
 

@@ -36,7 +36,7 @@ SYSTEM = """\
 2. domains : 이 질문에 실제로 필요한 도메인만 고른다.
    - me       : **내** 할 일 · 내 일정 · 내 잔여 연차. 주어가 사용자 자신인 질문
    - project  : 프로젝트의 진척 · 일정 · 위험 · 비용
-   - hcm      : 프로젝트 참여자의 가용성, 작업 성격에 맞는 역할 찾기
+   - hcm      : 프로젝트 참여자의 가용성(언제 빠듯한가·누가 부재인가)과 재배분 후보
    - meeting  : 회의 시간대 잡기
    - vacation : 휴가로 생기는 공백과 그 리스크
 
@@ -50,7 +50,7 @@ SYSTEM = """\
      그러니 "혹시 몰라서" 도메인을 추가하지 마라. 필요한 것만 골라야 비용이 안 샌다.
 
 3. focus : 어느 축을 **강조**할지. 실행 여부와는 무관하다.
-   가능한 값: priority, risk, cost, followup, skill_fit, workload, my_week
+   가능한 값: priority, risk, cost, followup, staffing, my_week
    질문이 특정 축을 겨냥하면 그 축을 넣고, 두루뭉술하면 빈 배열로 둔다.
 
 4. objective : 사용자가 실제로 얻고 싶은 것을 한 문장으로 다시 쓴다.
@@ -220,7 +220,7 @@ FEW_SHOTS = [
         "answer": {
             "mode": "analysis",
             "domains": ["hcm"],
-            "focus": ["skill_fit"],
+            "focus": ["staffing"],
             "objective": "△△ 도입 프로젝트의 남은 작업이 어느 역할의 일인지, 그 역할을 맡은 참여자가 누구인지 정리한다",
             "entities": {"project_ids": [1003]},
             "constraints": [],

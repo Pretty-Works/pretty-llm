@@ -11,7 +11,7 @@ from datetime import date
 
 from app.engine_b.context_builder import build_context, render_context
 from app.engine_b.validator import (
-    SKILL_FIT_CONFIDENCE_CAP,
+    STAFFING_CONFIDENCE_CAP,
     validate,
     validate_synthesis,
 )
@@ -129,7 +129,7 @@ async def test_후보군은_프로젝트_참여자를_넘지_않는다(project_p
     (`list_department_members` 무필터 호출). 그 경로로 프로젝트와 무관한 사람이
     후보군에 들어왔다. 이제 후보군은 프로젝트 참여자 + 질문에 이름이 나온 사람뿐이다.
     """
-    project_plan.focus = ["skill_fit"]          # 예전에 전사 조회를 촉발하던 조건
+    project_plan.focus = ["staffing"]          # 예전에 전사 조회를 촉발하던 조건
     context = await build_context(project_plan, request_p001)
 
     member_ids = {m.user_id for p in context.projects for m in p.members}
@@ -221,6 +221,8 @@ def test_회의록이_컨텍스트에_실린다(context_p001):
 
     text = render_context(context_p001, ("meetings",))
     assert "최근 회의록" in text and "후속 조치" in text
+    # id 가 안 보이면 followup 축이 회의 번호를 지어낸다 (실제로 1, 2 로 지어냈다)
+    assert "meeting:5001" in text
 
 
 def test_없는_할일에_후속조치를_연결하면_잡는다(context_p001):
@@ -299,7 +301,7 @@ def test_데이터게이트가_근거없는_축을_건너뛴다():
     apply_data_gate(context)
 
     assert skipped_dimensions(context) == {
-        "priority", "risk", "cost", "followup", "skill_fit", "workload", "my_week"
+        "priority", "risk", "cost", "followup", "staffing", "my_week"
     }
 
 
@@ -578,15 +580,15 @@ def test_정상적인_비용분석은_통과한다(context_p001):
     assert report.ok
 
 
-# ─── Validator - skill_fit ────────────────────────────────────────
+# ─── Validator - staffing (역할 매칭) ─────────────────────────────
 
 def _assignment(user_id: str, **overrides) -> dict:
-    """skill_fit 결과 1건. 점수·순위 필드는 없다 (2026-08-11 재설계)."""
+    """staffing 의 handoff 1건. 점수·순위 필드는 없다 (2026-08-11 재설계)."""
     base = {
-        "target": "todo:103",
-        "target_kind": "task",
+        "task_id": 103,
+        "from_user_id": 2,
         "work_type": "FE",
-        "matches": [
+        "candidates": [
             {
                 "user_id": user_id,
                 "name": "테스트",
@@ -602,15 +604,15 @@ def _assignment(user_id: str, **overrides) -> dict:
 def test_적합도_확신도_상한을_넘으면_잡는다(context_p001):
     """스킬 데이터가 없는 추론 축이라 구조적으로 확신할 수 없다."""
     output = _output(
-        "skill_fit",
-        {"assignments": [_assignment(3)]},
+        "staffing",
+        {"handoffs": [_assignment(3)]},
         domain="hcm",
         confidence=0.92,
     )
     report = validate([output], context_p001)
 
     assert "CONFIDENCE_CAP_EXCEEDED" in _codes(report)
-    assert str(SKILL_FIT_CONFIDENCE_CAP) in next(
+    assert str(STAFFING_CONFIDENCE_CAP) in next(
         v for v in report.errors if v.code == "CONFIDENCE_CAP_EXCEEDED"
     ).fix_hint
 
@@ -618,8 +620,8 @@ def test_적합도_확신도_상한을_넘으면_잡는다(context_p001):
 def test_부재를_밝히지_않으면_잡는다(context_p001):
     """u002 는 8/3~8/7 승인 휴가가 있다. 배제 사유가 아니라 밝혀야 할 사실이다."""
     output = _output(
-        "skill_fit",
-        {"assignments": [_assignment(2)]},
+        "staffing",
+        {"handoffs": [_assignment(2)]},
         domain="hcm",
         confidence=0.7,
     )
@@ -632,9 +634,9 @@ def test_부재를_밝히지_않으면_잡는다(context_p001):
 
 def test_부재를_note에_적으면_통과한다(context_p001):
     assignment = _assignment(2)
-    assignment["matches"][0]["note"] = "2026-08-03~2026-08-07 승인 휴가로 부재"
+    assignment["candidates"][0]["note"] = "2026-08-03~2026-08-07 승인 휴가로 부재"
     output = _output(
-        "skill_fit", {"assignments": [assignment]}, domain="hcm", confidence=0.7
+        "staffing", {"handoffs": [assignment]}, domain="hcm", confidence=0.7
     )
     report = validate([output], context_p001)
 
@@ -643,9 +645,9 @@ def test_부재를_note에_적으면_통과한다(context_p001):
 
 def test_근거가_비면_잡는다(context_p001):
     assignment = _assignment(3)
-    assignment["matches"][0]["basis"] = ""
+    assignment["candidates"][0]["basis"] = ""
     output = _output(
-        "skill_fit", {"assignments": [assignment]}, domain="hcm", confidence=0.7
+        "staffing", {"handoffs": [assignment]}, domain="hcm", confidence=0.7
     )
     report = validate([output], context_p001)
 
@@ -655,8 +657,8 @@ def test_근거가_비면_잡는다(context_p001):
 def test_후보군_밖의_사람을_제시하면_잡는다(context_p001):
     """후보군 표가 전부다. 전사 명부를 긁던 경로를 없앤 뒤의 마지막 방어선."""
     output = _output(
-        "skill_fit",
-        {"assignments": [_assignment(999)]},
+        "staffing",
+        {"handoffs": [_assignment(999)]},
         domain="hcm",
         confidence=0.7,
     )
@@ -667,8 +669,8 @@ def test_후보군_밖의_사람을_제시하면_잡는다(context_p001):
 
 def test_정상적인_역할_매칭은_통과한다(context_p001):
     output = _output(
-        "skill_fit",
-        {"assignments": [_assignment(3)]},
+        "staffing",
+        {"handoffs": [_assignment(3)]},
         domain="hcm",
         confidence=0.7,
     )
@@ -677,7 +679,7 @@ def test_정상적인_역할_매칭은_통과한다(context_p001):
     assert report.ok
 
 
-# ─── Validator - workload ─────────────────────────────────────────
+# ─── Validator - staffing (가용성 숫자) ───────────────────────────
 
 def _member_load(context, user_id: str, **overrides) -> dict:
     actual = next(w for w in context.workloads if w["user_id"] == user_id)
@@ -698,7 +700,7 @@ def _member_load(context, user_id: str, **overrides) -> dict:
 def test_부하지표를_바꿔_적으면_잡는다(context_p001):
     """코드가 센 값을 모델이 바꾸면 이후 판단이 전부 어긋난다."""
     output = _output(
-        "workload",
+        "staffing",
         {"members": [_member_load(context_p001, 2, overdue_count=0)]},
         domain="hcm",
     )
@@ -709,7 +711,7 @@ def test_부하지표를_바꿔_적으면_잡는다(context_p001):
 
 def test_지표를_그대로_인용하면_통과한다(context_p001):
     output = _output(
-        "workload",
+        "staffing",
         {"members": [_member_load(context_p001, 2)], "bottlenecks": [2]},
         domain="hcm",
     )
@@ -720,7 +722,7 @@ def test_지표를_그대로_인용하면_통과한다(context_p001):
 
 def test_휴가중인_사람에게_일을_넘기라고_하면_잡는다(context_p001):
     output = _output(
-        "workload",
+        "staffing",
         {
             "members": [_member_load(context_p001, 3)],
             "rebalance_hints": [
@@ -834,9 +836,9 @@ def test_도메인을_고르면_그_세트가_전부_실행대상이_된다():
     assert {s.dimension for s in specs} == {"priority", "risk", "cost", "followup"}
 
 
-def test_두_도메인을_고르면_여섯_워커가_돈다():
+def test_두_도메인을_고르면_다섯_워커가_돈다():
     specs = registry.specs_for_domains(["project", "hcm"])
-    assert len(specs) == 6
+    assert len(specs) == 5
 
 
 def test_아직_없는_도메인은_조용히_건너뛴다():
@@ -858,11 +860,11 @@ def test_meeting_도메인도_라우팅에_잡힌다():
 
 def test_축_이름으로_워커를_찾을_수_있다():
     """Validator 가 특정 축만 재실행시킬 때 쓴다."""
-    spec = registry.spec_by_dimension("workload")
+    spec = registry.spec_by_dimension("staffing")
 
     assert spec is not None
     assert spec.domain == "hcm"
-    assert spec.node_name == "hcm.workload"
+    assert spec.node_name == "hcm.staffing"
 
 
 def test_모든_워커는_결과스키마와_프롬프트를_갖는다():
@@ -872,8 +874,9 @@ def test_모든_워커는_결과스키마와_프롬프트를_갖는다():
             continue  # 자체 구현 워커는 프롬프트·도구를 쓰지 않는다
         assert spec.role.strip(), f"{spec.dimension} 역할 프롬프트 없음"
         assert spec.method.strip(), f"{spec.dimension} 판단절차 프롬프트 없음"
-        # my_week 는 일부러 도구가 없다 — 컨텍스트가 곧 전부라 더 찾아 헤맬 곳이 없어야 한다.
-        if spec.dimension != "my_week":
+        # my_week·risk 는 일부러 도구가 없다 — 전자는 컨텍스트가 곧 전부고,
+        # 후자는 조사하지 않는 종합 축이라 도구를 주면 다른 축을 또 보게 된다.
+        if spec.dimension not in {"my_week", "risk"}:
             assert spec.tools, f"{spec.dimension} 에 도구가 없음"
 
 

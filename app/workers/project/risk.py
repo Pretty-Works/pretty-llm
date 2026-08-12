@@ -15,12 +15,10 @@ from pydantic import Field
 from app.clients.gmail_mcp_client import get_gmail_read_tools
 from app.prompts import risk as prompt
 from app.schemas.lenient import LenientModel
-from app.tools.budget_tool import get_project_budget
-from app.tools.hr_tool import list_member_leaves
-from app.tools.project_query import PROJECT_TOOLS
 from app.workers.base import WorkerSpec
 
-RiskCategory = Literal["schedule", "resource", "scope", "quality", "cost", "external"]
+# cost 를 뺐다 — 예산은 비용 축이 수치까지 낸다. 여기서 다시 판단하면 결론이 둘이 된다.
+RiskCategory = Literal["schedule", "resource", "scope", "quality", "external"]
 
 
 class RiskItem(LenientModel):
@@ -56,7 +54,9 @@ SPEC = WorkerSpec(
     role=prompt.ROLE,
     method=prompt.METHOD,
     result_model=RiskResult,
-    tools=(*PROJECT_TOOLS, get_project_budget, list_member_leaves),
+    # 내부 조회 도구를 뺐다 — 이 축은 조사하지 않는다. 컨텍스트에 이미 계산되어
+    # 들어온 사실만 조합한다. 도구를 주면 다른 축이 보는 것을 또 보게 된다.
+    tools=(),
     async_tools=get_gmail_read_tools,
     context_sections=("project", "milestones", "todos", "members", "meetings", "budget", "leaves", "workload"),
 )
