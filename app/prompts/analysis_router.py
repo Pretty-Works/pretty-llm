@@ -73,6 +73,14 @@ SYSTEM = """\
 
 7. reasoning : 왜 그렇게 골랐는지 1~2문장.
 8. confidence : 라우팅 판단의 확신도 0.0~1.0. 질문이 모호하면 낮춰라.
+
+[★ 예시에 대하여 — 반드시 지켜라]
+아래 few-shot 에 나오는 사람 이름·프로젝트명·id 는 전부 **자리표시자**다.
+실재하지 않는 값이고, 라우팅 형식을 보여주려고 넣어둔 것이다.
+
+실제 질문이나 화면 컨텍스트에 없는 이름·프로젝트명·id 를 예시에서 가져다 쓰지 마라.
+질문에 대상이 안 나오고 화면에도 없으면 entities 를 **비워 둔다**. 그게 정답이다.
+채우지 못한 걸 예시 값으로 메우면 엉뚱한 사람·프로젝트를 분석하게 된다.
 """
 
 
@@ -96,13 +104,13 @@ FEW_SHOTS = [
         },
     },
     {
-        "query": "그룹웨어 리뉴얼 프로젝트 지금 상태 어때? 위험한 거 있으면 알려줘",
+        "query": "○○ 개편 프로젝트 지금 상태 어때? 위험한 거 있으면 알려줘",
         "ui": "screen=project_detail, project_id=1001",
         "answer": {
             "mode": "analysis",
             "domains": ["project"],
             "focus": ["risk"],
-            "objective": "그룹웨어 리뉴얼 프로젝트의 현재 진행 상태와 위험 요인을 파악한다",
+            "objective": "○○ 개편 프로젝트의 현재 진행 상태와 위험 요인을 파악한다",
             "entities": {"project_ids": [1001]},
             "constraints": [],
             "reasoning": "현재 상태 파악 요청이라 analysis. 프로젝트 도메인이면 충분하고 '위험한 거'가 명시되어 risk 를 강조점으로 둔다.",
@@ -110,16 +118,16 @@ FEW_SHOTS = [
         },
     },
     {
-        "query": "김민석 대리가 8월 초에 휴가 가는데 프로젝트 일정 괜찮을까?",
+        "query": "홍길동 대리가 8월 초에 휴가 가는데 프로젝트 일정 괜찮을까?",
         "ui": "screen=project_detail, project_id=1001",
         "answer": {
             "mode": "analysis",
             "domains": ["vacation"],
             "focus": [],
-            "objective": "김민석의 8월 초 부재가 프로젝트 일정에 주는 영향을 확인한다",
+            "objective": "홍길동의 8월 초 부재가 프로젝트 일정에 주는 영향을 확인한다",
             "entities": {
                 "project_ids": [1001],
-                "user_names": ["김민석"],
+                "user_names": ["홍길동"],
                 "date_from": "2026-08-01",
                 "date_to": "2026-08-31",
             },
@@ -207,13 +215,13 @@ FEW_SHOTS = [
         },
     },
     {
-        "query": "AI 에이전트 도입 프로젝트에 누구를 더 붙이면 좋을까?",
+        "query": "△△ 도입 프로젝트에 누구를 더 붙이면 좋을까?",
         "ui": "screen=project_detail, project_id=1003",
         "answer": {
             "mode": "analysis",
             "domains": ["hcm"],
             "focus": ["skill_fit"],
-            "objective": "AI 에이전트 도입 프로젝트의 남은 작업이 어느 역할의 일인지, 그 역할을 맡은 참여자가 누구인지 정리한다",
+            "objective": "△△ 도입 프로젝트의 남은 작업이 어느 역할의 일인지, 그 역할을 맡은 참여자가 누구인지 정리한다",
             "entities": {"project_ids": [1003]},
             "constraints": [],
             "reasoning": "역할 매칭 질문이라 hcm 만으로 충분하다. 다만 프로젝트 밖 인원은 조회할 수 없으므로 참여자 범위 안에서 답한다.",

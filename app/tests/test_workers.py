@@ -185,6 +185,31 @@ def _async(value):
     return _wrapped()
 
 
+def test_라우터_프롬프트에_픽스처_값이_없다():
+    """★ 회귀 — few-shot 의 '이민주'가 매 라우팅 호출마다 모델 컨텍스트에 실렸다.
+
+    예시 값은 자리표시자여야 한다. 픽스처 인물·프로젝트명이 예시에 있으면
+    모델이 실제 질문에 없는 대상을 그대로 가져다 쓸 여지가 생긴다.
+    이름을 다른 이름으로 바꾸는 건 방어가 아니다 — 이 테스트가 방어다.
+    """
+    from app.prompts import analysis_router
+    from app.tools import demo_data
+
+    text = analysis_router.SYSTEM + analysis_router.build_few_shot_text()
+    leaked = [u["name"] for u in demo_data.USERS if u["name"] in text]
+    leaked += [p["name"] for p in demo_data.PROJECTS if p["name"] in text]
+
+    assert not leaked, f"라우터 프롬프트에 픽스처 값이 들어 있다: {leaked}"
+
+
+def test_라우터_프롬프트가_예시값_사용을_금지한다():
+    """자리표시자라는 사실을 모델에게 명시해야 한다. 문구가 빠지면 예시가 곧 정답이 된다."""
+    from app.prompts import analysis_router
+
+    assert "자리표시자" in analysis_router.SYSTEM
+    assert "entities 를 **비워 둔다**" in analysis_router.SYSTEM
+
+
 def test_데이터게이트가_근거없는_축을_건너뛴다():
     """근거가 없으면 워커를 돌리지 않는다 — 예전에는 '도구로 직접 찾아라'고 넘겼다."""
     from app.engine_b.context_builder import apply_data_gate, skipped_dimensions
