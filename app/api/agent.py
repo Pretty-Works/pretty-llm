@@ -28,6 +28,9 @@ from app.orchestrator.classify import classify
 from app.orchestrator.domains import agent_for_domain
 from app.schemas.state import Mode
 from app.tools.registry import RunContext
+from app.utils.logger import get_logger
+
+log = get_logger("api.agent")
 
 # ★ app.engine_b.replan_agent 는 여기서 top-level import 하지 않는다 — 그 import
 #   체인이 app.engine_b.scenario_executor → graph → app.workers.registry →
@@ -262,11 +265,19 @@ async def _engine_b_stream(goal: str, run_id: str, history: list[dict] | None = 
 
 async def _guard(gen):
     """스트림이 done/approval_request 없이 죽으면 BE 가 AGENT_017 로 판정한다.
-    그래서 무슨 예외가 나든 마지막에 error 이벤트 하나는 반드시 내보낸다."""
+    그래서 무슨 예외가 나든 마지막에 error 이벤트 하나는 반드시 내보낸다.
+
+    ★ 8/12 추가 — 지금까지는 이 except 가 traceback 을 어디에도 안 남기고
+      sse.error() 텍스트로만 삼켜서, "모든 요청이 실패한다"는 신고가 와도 도커
+      로그엔 /api/agent/runs 200 OK 만 남고 원인을 못 봤다. logger.exception() 은
+      스택트레이스까지 로그에 찍어 준다 — 여기서 원인을 못 찾으면 스트림 자체가
+      아니라 그 앞(classify·agent_for_domain 등 라우팅 단계)에서 죽은 것이니
+      start_run/resume_run 쪽도 같이 봐야 한다."""
     try:
         async for event in gen:
             yield event
     except Exception as exc:                       # noqa: BLE001 — 최후 방어선
+        log.exception("Run 처리 중 예외 발생 — 아래 traceback 이 실제 원인이다")
         yield sse.error(f"작업 중 오류가 발생했습니다: {type(exc).__name__}: {exc}")
 
 

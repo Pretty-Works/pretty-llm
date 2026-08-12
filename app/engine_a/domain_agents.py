@@ -29,12 +29,13 @@ from app.tools.analyze import analyze_impact
 from app.tools.memory_tool import doc_search, recall
 from app.tools.ask_user import ask_user
 from app.tools.expense_tool import budget_summary, expense_create, expense_list
+from app.tools.meeting_tool import meeting_list
 from app.tools.navigate import navigate
 from app.tools.project_tool import project_members, project_search
 from app.tools.read_errors import read_error_middleware
 from app.tools.registry import RunContext, is_write
 from app.tools.schedule_tool import schedule_create, schedule_list, schedule_update
-from app.tools.task_tool import task_create, task_list, task_toggle_status
+from app.tools.task_tool import task_create, task_due_within, task_list, task_toggle_status, task_update
 from app.tools.user_tool import user_me, user_search
 
 
@@ -78,13 +79,48 @@ def build_domain_agent(tools: list, domain_prompt: str, checkpointer,
 TASK_PROMPT = """당신은 그룹웨어의 할일 담당 에이전트입니다.
 
 도메인 규칙:
+- "오늘 할일 뭐 있어?" / "오늘 몇 개 완료했어?" / "내일까지 마감인거 확인해줘" /
+  "이번 주까지 마감인거 뭐 있어?" 처럼 특정 날짜(오늘 포함)까지의 마감 기준이면
+  task_list 가 아니라 task_due_within 을 써라 — 상대 표현은 user_me 로 오늘을
+  먼저 확인해 절대 날짜로 바꾼 뒤 untilDate 에 넣는다("내일"→오늘+1일). 완료/
+  미완료 건수는 이 도구가 코드로 정확히 센 값이니 그대로 인용하라 — task_list
+  표를 보고 눈으로 다시 세면 틀리기 쉽다(이월 항목 중복 세기 등). 특정 주(週)
+  전체 조회(예: "다음 주 할일 목록 보여줘")만 task_list 를 써라.
 - 할일 등록은 여러 건이어도 task_create 한 번(배치)으로 — 나눠 부르면 승인 카드가
   여러 장 뜬다. 회의록 후속조치를 할일로 만들 때도 한 번에 담아라.
 - 할일은 본인 것만 만들고 바꿀 수 있다. 남의 할일 요청은 "본인 할일만 가능해요"라고
   거절하라.
 - 프로젝트 할일의 마감일은 프로젝트 기간 안이어야 한다 — project_search 로 기간을
   먼저 확인하라. 개인 할일(projectId=null)은 제약이 없다.
-- 완료 처리는 task_list 로 대상을 특정한 뒤 task_toggle_status(목표 상태 명시)."""
+- 완료 처리는 task_list 로 대상을 특정한 뒤 task_toggle_status(목표 상태 명시).
+- task_list 결과에 마감(dueDate)이 이미 지났는데 미완료(□)인 할일이 있으면, 조용히
+  목록만 보여주지 말고 먼저 짚어줘라 — "'OOO' 할일 마감이 지났어요, 일정이 지연된
+  것 같아요"처럼 알리고 ask_user 로 다음 행동을 물어라(예: "완료 처리할까요?" /
+  "마감일을 미룰까요?" / "그대로 둘까요?").
+- 마감일 변경은 task_update 로 실제 처리한다. ★ task_update 는 PUT 전체 교체다 —
+  content·projectId·dueDate 를 항상 셋 다 보내야 한다. 마감일만 바꾸는 요청이어도
+  먼저 task_list 로 그 할일의 현재 content 와 projectId 를 확인해, 바뀌지 않는
+  두 필드는 기존 값 그대로 채우고 dueDate 만 새 값으로 넣어 호출하라 — projectId 를
+  비우면 프로젝트 할일이 개인 할일로 바뀌어 버리니 절대 임의로 null 을 넣지 마라.
+  본인이 만든 할일만 수정할 수 있다.
+- ★ "이번주 주간보고 작성해줘" 처럼 주간 업무 보고를 요청받으면, 이건 할일 목록
+  하나만 보여주는 조회가 아니다 — 실제 업무 보고서처럼 여러 문단으로 써라(위의
+  공통 규칙 "한두 문장으로만 보고하라"는 이 요청엔 적용하지 않는다). 답변 맨 앞에
+  "작업 완료 보고" 같은 고정 문구를 붙이지 말고, 곧장 보고서 내용으로 시작하라.
+  다음 순서로 자료를 모아 하나의 보고서로 종합하라:
+    1) user_me 로 오늘/이번 주 범위를 확인한다.
+    2) task_list(weekOffset=0) 로 이번 주 할일을 모아 완료/진행중을 정리한다.
+    3) project_search(keyword="") 로 참여 중인 프로젝트를 확인하고, 각 프로젝트마다
+       meeting_list 로 이번 주에 작성된 회의록이 있는지 살펴 "어떤 회의를 진행했는지"
+       (제목·날짜·목적 요약)를 문장으로 풀어 써라 — meeting_detail 은 내용이 더 필요할
+       때만 추가로 부른다.
+    4) schedule_list(이번 주 월~일) 로 이번 주 일정 중 완료된 회의(MEETING) 외의
+       주요 일정(외근·예정 회의 등)도 확인해 보고서에 반영한다.
+  보고서는 "이번 주 업무 요약" → "완료한 업무" → "참석/진행한 회의" → "주요 일정"
+  순서의 문단으로 구성하고, 각 항목의 수치(완료 건수 등)는 도구가 계산해 준 값을
+  그대로 인용하라 — 직접 세지 마라. 조회했는데 실제로 아무 자료가 없으면(할일도
+  회의도 일정도 0건) 지어내지 말고 "이번 주 기록된 업무가 없습니다"처럼 사실대로
+  적어라."""
 
 # ── 일정 에이전트 ──────────────────────────────────────────
 SCHEDULE_PROMPT = """당신은 그룹웨어의 일정 담당 에이전트입니다.
@@ -138,8 +174,9 @@ async def _get(key: str, tools: list, prompt: str, prefix: str):
 
 
 async def get_task_agent():
-    return await _get("task", [user_me, project_search, task_list, task_create,
-                               task_toggle_status, analyze_impact, recall, doc_search, ask_user, navigate], TASK_PROMPT,
+    return await _get("task", [user_me, project_search, task_list, task_due_within, task_create,
+                               task_toggle_status, task_update, schedule_list, meeting_list,
+                               analyze_impact, recall, doc_search, ask_user, navigate], TASK_PROMPT,
                       "할 일 등록/변경")
 
 

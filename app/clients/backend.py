@@ -333,6 +333,11 @@ def _mock_write(path: str, body: bytes) -> Any:
         return {"taskId": int(path.split("/")[2]), "content": "API 명세 정리",
                 "completed": data.get("completed"), "changed": True,
                 "completedAt": "2026-08-05T11:00:00" if data.get("completed") else None}
+    if path.startswith("/tasks/"):                    # task.update (PUT 전체 교체)
+        project_id = data.get("projectId")
+        return {"taskId": int(path.split("/")[2]), "content": data.get("content"),
+                "dueDate": data.get("dueDate"), "projectId": project_id,
+                "projectName": "그룹웨어 AI 고도화" if project_id == 3 else None}
     if path == "/schedules":
         n = len(data.get("participantUserIds") or [])
         return {"scheduleId": 62, "title": data.get("title"), "startAt": data.get("startAt"),
