@@ -118,6 +118,22 @@ def _render(r) -> str:
         if p
     ]
 
+    # ★ 8/12 추가 — synthesis 가 만드는 가장 구체적인 부분(actions: 무엇을·누가·
+    #   언제·왜)이 지금까지 여기서 빠져 있었다. headline/summary는 synthesis 프롬프트
+    #   규칙상("모든 워커 결과를 요약해서 나열하는 것 금지") 원래 짧고 추상적으로
+    #   쓰이는데, actions 없이 그 둘 + residual_risks 만 보여주면 "마감일이 임박한
+    #   할 일들이 다수 존재" 처럼 구체적인 할 일 이름 하나 없는 두루뭉술한 답만
+    #   남는다 — 실제로 어떤 할 일을 어떻게 하라는지가 다 actions 에 있었는데
+    #   렌더링에서 누락됐었다.
+    if getattr(r, "actions", None):
+        lines = ["할 일:"]
+        for a in sorted(r.actions, key=lambda x: x.order)[:6]:
+            who = f" ({a.who})" if a.who else ""
+            when = f" — {a.when}" if a.when else ""
+            why = f" : {a.why}" if a.why else ""
+            lines.append(f"{a.order}. {a.what}{who}{when}{why}")
+        parts.append("\n".join(lines))
+
     # ★ 회의 추천 순위
     if getattr(r, "meeting_ranking", None):
         lines = ["추천 회의 시간:"]

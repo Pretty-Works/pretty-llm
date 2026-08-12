@@ -35,6 +35,10 @@ PROJECTS: list[dict[str, Any]] = [
     {"id": 1001, "name": "그룹웨어 리뉴얼", "status": "ACTIVE", "start_date": "2026-04-01", "due_date": "2026-09-30"},
     {"id": 1002, "name": "사내 메일 Outlook 연동", "status": "ACTIVE", "start_date": "2026-06-15", "due_date": "2026-08-31"},
     {"id": 1003, "name": "AI 에이전트 도입", "status": "PLANNING", "start_date": "2026-08-01", "due_date": "2026-12-31"},
+    # ★ 재계획 시연용 — 백엔드 리드 1명이 핵심 태스크 2개를 쥔 채 정확히 그 마감
+    #   기간에 승인 휴가가 겹치는 시나리오. EXTEND(연장)/REALLOCATE(인력 재배치)/
+    #   REDUCE_SCOPE(범위 축소) 3안이 전부 근거를 갖고 갈리도록 설계했다.
+    {"id": 1004, "name": "AI 코파일럿 베타 출시", "status": "ACTIVE", "start_date": "2026-07-01", "due_date": "2026-09-15"},
 ]
 
 PROJECT_MEMBERS: list[dict[str, Any]] = [
@@ -59,6 +63,12 @@ PROJECT_MEMBERS: list[dict[str, Any]] = [
     {"project_id": 1003, "user_id": 1, "role": "BE", "status": "ACTIVE"},
     {"project_id": 1003, "user_id": 6, "role": "BE", "status": "ACTIVE"},
     {"project_id": 1003, "user_id": 7, "role": "QA", "status": "ACTIVE"},
+    # p004 — ★ BE 는 김수민(1) 혼자다(SPOF). 한도윤(6)·서준호(8)는 프로젝트 밖
+    #   인원이라 skill_fit 워커가 "적임자 추천" 후보군(전사 인원)에서 찾아야 한다.
+    {"project_id": 1004, "user_id": 4, "role": "PM", "status": "ACTIVE"},
+    {"project_id": 1004, "user_id": 1, "role": "BE", "status": "ACTIVE"},
+    {"project_id": 1004, "user_id": 3, "role": "FE", "status": "ACTIVE"},
+    {"project_id": 1004, "user_id": 7, "role": "QA", "status": "ACTIVE"},
 ]
 
 
@@ -90,6 +100,16 @@ TODOS: list[dict[str, Any]] = [
     {"id": 302, "project_id": 1003, "title": "에이전트 PoC", "status": "TODO", "due_date": "2026-09-30", "assignee_id": 1},
     {"id": 303, "project_id": 1003, "title": "평가 데이터셋 구축", "status": "TODO", "due_date": "2026-10-16", "assignee_id": 7},
     {"id": 304, "project_id": 1003, "title": "인프라 비용 산정", "status": "TODO", "due_date": "2026-08-31", "assignee_id": 6},
+    # p004 — 핵심(401·402·408)은 전부 김수민(1) 담당. 405·406 은 베타 출시에
+    #   안 막히는 후속 기능이라 REDUCE_SCOPE 의 "뺄 후보"로 쓰라고 일부러 넣었다.
+    {"id": 401, "project_id": 1004, "title": "추천 엔진 API 연동", "status": "IN_PROGRESS", "due_date": "2026-08-25", "assignee_id": 1},
+    {"id": 402, "project_id": 1004, "title": "프롬프트 안전 필터링", "status": "TODO", "due_date": "2026-08-28", "assignee_id": 1},
+    {"id": 403, "project_id": 1004, "title": "베타 온보딩 UI", "status": "IN_PROGRESS", "due_date": "2026-08-20", "assignee_id": 3},
+    {"id": 404, "project_id": 1004, "title": "사용성 테스트 진행", "status": "TODO", "due_date": "2026-09-05", "assignee_id": 7},
+    {"id": 405, "project_id": 1004, "title": "관리자 대시보드 통계 위젯", "status": "TODO", "due_date": "2026-09-10", "assignee_id": 1},
+    {"id": 406, "project_id": 1004, "title": "다국어 지원(2차 예정 기능 선반영)", "status": "TODO", "due_date": "2026-09-12", "assignee_id": 3},
+    {"id": 407, "project_id": 1004, "title": "베타 피드백 설문지 연동", "status": "TODO", "due_date": "2026-08-30", "assignee_id": 4},
+    {"id": 408, "project_id": 1004, "title": "부하 테스트(피크 트래픽 시뮬레이션)", "status": "TODO", "due_date": "2026-09-08", "assignee_id": 1},
 ]
 
 
@@ -103,6 +123,9 @@ LEAVES: list[dict[str, Any]] = [
     # 미승인건은 가용성 계산에 반영하지 않는다 (ERD: 승인된 신청서 기준)
     {"id": 2005, "user_id": 3, "leave_type": "연차", "start_date": "2026-08-24", "end_date": "2026-08-28", "status": "PENDING"},
     {"id": 2006, "user_id": 1, "leave_type": "연차", "start_date": "2026-05-06", "end_date": "2026-05-08", "status": "APPROVED"},
+    # ★ p004 재계획 시연의 핵심 충돌 — 김수민(1)의 승인 휴가가 401·402 마감과
+    #   정면으로 겹친다. risk/skill_fit 워커가 "1순위 추천 불가" 사유로 잡아야 한다.
+    {"id": 2007, "user_id": 1, "leave_type": "연차", "start_date": "2026-08-24", "end_date": "2026-08-28", "status": "APPROVED"},
 ]
 
 # [연차현황] user_id, 연도, 부여일수
@@ -128,6 +151,8 @@ SCHEDULES: list[dict[str, Any]] = [
     {"id": 3005, "project_id": 1001, "title": "QA 싱크", "date": "2026-08-06", "start_time": "11:00", "end_time": "12:00", "participants": [7, 3]},
     {"id": 3006, "project_id": 1002, "title": "보안 리뷰", "date": "2026-08-11", "start_time": "14:00", "end_time": "15:00", "participants": [8, 6, 4]},
     {"id": 3007, "project_id": 1001, "title": "주간 스크럼", "date": "2026-08-04", "start_time": "10:00", "end_time": "11:00", "participants": [1, 3, 5, 7]},
+    {"id": 3008, "project_id": 1004, "title": "베타 출시 리허설", "date": "2026-08-19", "start_time": "14:00", "end_time": "16:00", "participants": [1, 3, 4, 7]},
+    {"id": 3009, "project_id": 1004, "title": "런칭 회고 계획", "date": "2026-09-01", "start_time": "11:00", "end_time": "12:00", "participants": [4, 7]},
 ]
 
 
@@ -137,6 +162,7 @@ BUDGETS: list[dict[str, Any]] = [
     {"project_id": 1001, "total": 120_000_000, "currency": "KRW"},
     {"project_id": 1002, "total": 40_000_000, "currency": "KRW"},
     {"project_id": 1003, "total": 60_000_000, "currency": "KRW"},
+    {"project_id": 1004, "total": 80_000_000, "currency": "KRW"},
 ]
 
 EXPENSES: list[dict[str, Any]] = [
@@ -147,12 +173,19 @@ EXPENSES: list[dict[str, Any]] = [
     {"id": 4201, "project_id": 1002, "title": "Outlook 커넥터 라이선스", "category": "라이선스", "amount": 12_000_000, "date": "2026-06-20", "status": "PAID"},
     {"id": 4202, "project_id": 1002, "title": "메일 동기화 외주 개발", "category": "외주", "amount": 16_200_000, "date": "2026-07-10", "status": "PAID"},
     {"id": 4203, "project_id": 1002, "title": "SMTP 릴레이 인프라", "category": "인프라", "amount": 3_000_000, "date": "2026-07-15", "status": "PAID"},
+    # p004 — 예산 자체는 여유 있다(33% 집행). 이 시연의 제약은 돈이 아니라
+    # 사람(SPOF)이라는 걸 보여주려는 의도다 — cost 워커가 "예산은 문제 없다"고
+    # 판단하는 것도 정상 결과다.
+    {"id": 4401, "project_id": 1004, "title": "GPU 추론 인프라(7월)", "category": "인프라", "amount": 14_000_000, "date": "2026-07-25", "status": "PAID"},
+    {"id": 4402, "project_id": 1004, "title": "LLM API 사용료(7~8월 누적)", "category": "인프라", "amount": 9_500_000, "date": "2026-08-05", "status": "PAID"},
+    {"id": 4403, "project_id": 1004, "title": "베타 테스터 리워드", "category": "마케팅", "amount": 3_000_000, "date": "2026-08-01", "status": "PAID"},
 ]
 
 # 결재 진행중 = 아직 안 나갔지만 사실상 묶인 금액
 PENDING_APPROVALS: list[dict[str, Any]] = [
     {"id": 5101, "project_id": 1001, "title": "9월 클라우드 선결제", "amount": 12_000_000, "status": "PENDING", "doc_type": "지출결의서"},
     {"id": 5201, "project_id": 1002, "title": "메일 보안 점검 외주", "amount": 6_500_000, "status": "PENDING", "doc_type": "품의서"},
+    {"id": 5401, "project_id": 1004, "title": "9월 GPU 확장 증설", "amount": 6_000_000, "status": "PENDING", "doc_type": "품의서"},
 ]
 
 

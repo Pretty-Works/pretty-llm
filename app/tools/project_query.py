@@ -8,7 +8,11 @@
 전부 읽기 전용이므로 HITL 승인 대상이 아니다.
 
 조회 창구는 clients/backend.py 하나다 (2026-08-07 통일 — X-Run-Id 는 run_context 로 전파).
-mock 모드·run_id 부재·호출 실패면 demo_data 픽스처로 폴백한다.
+★ 8/12 수정 — mock 모드라고 여기서 곧장 demo_data 로 안 간다. backend.get() 이
+mock_backend=True 일 때 이미 알아서 _mock_get() 픽스처를 쓰므로, mock 이든
+실백엔드든 항상 backend.get() 을 먼저 시도한다. run_id 부재·호출 실패일 때만
+demo_data 픽스처로 폴백한다 — 그래야 Engine A 도구들이 보는 mock 프로젝트와
+Engine B 가 분석하는 프로젝트가 같은 데이터를 가리킨다.
 프로젝트 상세(project.detail)는 ⛔ v1 제외라 목록(project.search)에서 집어 쓴다.
 """
 
@@ -19,7 +23,6 @@ from langchain_core.tools import tool
 
 from app.clients.backend import backend
 from app.common.run_context import current_run_id
-from app.config import get_settings
 from app.tools import demo_data
 from app.utils.logger import get_logger
 
@@ -31,9 +34,19 @@ def _json(payload: Any) -> str:
 
 
 async def _get(path: str, **params: Any) -> Any | None:
-    """실백엔드 조회. mock 모드·run_id 부재·실패면 None — 호출부가 픽스처로 폴백한다."""
-    if get_settings().uses_fixtures:
-        return None
+    """백엔드 조회(mock 이든 실백엔드든 backend.get() 창구 하나로 통일). run_id
+    부재·호출 실패면 None — 호출부가 demo_data 픽스처로 폴백한다.
+
+    ★ 8/12 수정 — 예전엔 mock 모드(settings.uses_fixtures)면 여기서 곧장 None을
+      반환해 demo_data.py(Engine B 전용 가상 프로젝트 1001~1004)로 바로 떨어졌다.
+      backend.get() 은 mock_backend=True 여도 이미 내부에서 _mock_get() 픽스처를
+      쓰므로(app/clients/backend.py), 그걸 또 우회하면 Engine A 도구들이 보는 mock
+      데이터("다온증권 해외주식 주문 개선" 등 실제 화면에 뜨는 프로젝트)와 Engine B
+      워커가 보는 데이터가 서로 다른 회사인 것처럼 어긋난다 — 재계획 대상 프로젝트가
+      Engine B 쪽 가상 데이터엔 아예 없어서 실행 가능한 조정안을 하나도 못 만드는
+      사고로 이어졌다(2026-08-12). 그래서 mock 여부와 무관하게 run_id 만 있으면
+      항상 backend.get() 을 먼저 시도하고, 진짜 실패(run_id 없음·예외)일 때만
+      demo_data 로 폴백한다."""
     run_id = current_run_id.get()
     if not run_id:
         log.warning("run_id 없이 내부도구 호출: %s — 픽스처 폴백", path)
