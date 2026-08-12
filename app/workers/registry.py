@@ -12,6 +12,7 @@ focus 는 강조점일 뿐이라 여기서 워커를 걸러내지 않는다. (�
 from app.schemas.state import Domain
 from app.workers.base import WorkerSpec
 from app.workers.hr import skill_fit, workload
+from app.workers.me import my_week
 from app.workers.meeting import adapter as meeting_adapter
 from app.workers.project import cost, priority, risk
 from app.workers.vacation import vacation_worker
@@ -19,6 +20,7 @@ from app.workers.vacation import vacation_worker
 _REGISTRY: dict[str, list[WorkerSpec]] = {
     "project": [priority.SPEC, risk.SPEC, cost.SPEC],
     "hcm": [skill_fit.SPEC, workload.SPEC],
+    "me": [my_week.SPEC],
     "meeting": [meeting_adapter.SPEC],
     "vacation": [vacation_worker.SPEC],
 }

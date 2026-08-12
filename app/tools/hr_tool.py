@@ -143,6 +143,51 @@ async def fetch_schedules(
     ]
 
 
+# ─── 본인 스코프 (me 도메인) ──────────────────────────────────────
+#
+# 아래 셋은 전부 요청자 본인 것만 돌려주는 내부도구다. userIds 를 안 싣는 게 핵심 —
+# 그러면 BE 가 X-Run-Id 로 역산한 본인으로 스코프를 고정한다.
+
+async def fetch_my_tasks(week_offset: int = 0) -> dict | None:
+    """내 이번 주 할 일. projectId 를 안 주면 task.list 가 MINE 스코프로 답한다."""
+    raw = await _get("/tasks", weekOffset=week_offset)
+    if raw is None:
+        return None
+    return {
+        "week_start": raw.get("weekStart"),
+        "week_end": raw.get("weekEnd"),
+        "tasks": [
+            {"id": t.get("taskId"), "title": t.get("content"), "due_date": t.get("dueDate"),
+             "status": "DONE" if t.get("completed") else "TODO",
+             "project_id": t.get("projectId"), "project_name": t.get("projectName"),
+             "is_carry_over": bool(t.get("isCarryOver"))}
+            for t in raw.get("tasks", [])
+        ],
+    }
+
+
+async def fetch_my_schedules(date_from: date, date_to: date) -> list[dict]:
+    """내 일정. userIds 를 싣지 않아 본인 참여분만 온다."""
+    raw = await _get("/schedules", **{"from": date_from.isoformat(), "to": date_to.isoformat()})
+    if raw is None:
+        return []
+    return [
+        {"id": s.get("scheduleId"), "title": s.get("title"), "start_at": s.get("startAt"),
+         "end_at": s.get("endAt"), "all_day": bool(s.get("allDay")),
+         "type": s.get("type"), "is_leave": bool(s.get("isLeave"))}
+        for s in raw.get("schedules", [])
+    ]
+
+
+async def fetch_my_leave_balance(year: int | None = None) -> dict | None:
+    """내 잔여 연차. leave.balance 는 본인 것만 준다 — 남의 것은 조회 경로가 없다."""
+    raw = await _get("/leaves/balance", **({"year": year} if year else {}))
+    if raw is None:
+        return None
+    return {"granted": raw.get("grantedDays"), "used": raw.get("usedDays"),
+            "remaining": raw.get("remainingDays")}
+
+
 def _capped(user_ids: list[int]) -> list[int]:
     """대상 인원 상한. 넘으면 앞에서 자른다 — 호출부가 notes 에 남긴다."""
     unique = list(dict.fromkeys(uid for uid in user_ids if uid))

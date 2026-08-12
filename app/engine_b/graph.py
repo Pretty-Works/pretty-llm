@@ -126,11 +126,25 @@ def _validator_node(state: EngineBState) -> dict[str, Any]:
 
 async def _synthesis_node(state: EngineBState) -> dict[str, Any]:
     context = state["context"]
+    outputs = state.get("worker_outputs") or []
+
+    # 재시도로도 error 를 못 고친 축은 통합에서 뺀다. 예전에는 "남은 위반을 그대로
+    # 보고한다"며 근거가 틀린 축까지 답변에 실었다 — 존재하지 않는 할 일을 인용한
+    # 위험 분석이 그대로 사용자에게 나갔다. 못 본 걸로 두는 쪽이 낫다.
+    validation = state.get("validation")
+    dropped = validation.dimensions_with_errors() if validation else set()
+    if dropped:
+        outputs = [o for o in outputs if o.dimension not in dropped]
+        context.skipped += [
+            f"{dimension}: 근거 검증을 통과하지 못해 답변에서 제외" for dimension in sorted(dropped)
+        ]
+        log.warning("근거 검증 실패로 답변에서 제외한 축: %s", sorted(dropped))
+
     result = await synthesize(
-        state.get("worker_outputs") or [],
+        outputs,
         state["plan"],
         context,
-        state.get("validation"),
+        validation,
         state.get("scenario"),
     )
 

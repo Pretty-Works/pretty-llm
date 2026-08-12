@@ -103,8 +103,22 @@ class Settings(BaseSettings):
 
     @property
     def uses_fixtures(self) -> bool:
-        """툴이 백엔드 대신 demo_data 픽스처를 쓸지."""
+        """툴이 백엔드 대신 픽스처를 쓸지."""
         return self.mock_backend or not self.backend_base_url
+
+    def data_source_status(self) -> dict[str, object]:
+        """지금 무엇을 데이터로 쓰고 있는지. 기동 로그·/health 가 이걸 그대로 노출한다.
+
+        ★ 이 값이 안 보여서 배포가 픽스처로 도는 걸 아무도 몰랐다(2026-08-11 사고).
+          키 값은 절대 싣지 않는다 — 채워졌는지 여부만 낸다.
+        """
+        return {
+            "mode": "fixtures" if self.uses_fixtures else "backend",
+            "mockBackend": self.mock_backend,
+            "backendBaseUrl": self.backend_base_url or None,
+            "internalApiKeySet": bool(self.internal_api_key),
+            "inboundApiKeySet": bool(self.inbound_api_key),
+        }
 
     def as_of(self) -> date:
         """분석 기준일. 미지정 시 시스템 오늘 날짜."""

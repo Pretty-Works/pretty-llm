@@ -164,6 +164,44 @@ Context Builder 뒤에서 **코드가** 판정한다. 근거가 없는 축은 �
 | `app/workers/hr/workload.py` · `app/prompts/workload.py` | 기간 중심으로 재작성 |
 | `app/schemas/state.py` | `MilestoneSnapshot`·`MeetingSnapshot` 추가, `MemberSnapshot.hire_date` 제거, `skipped` 추가 |
 | `app/tests/conftest.py` | 픽스처를 API 자리에 끼우는 `fixture_backed_hr` 신설 |
+| `app/config.py` · `app/main.py` | `data_source_status()` 신설 → 기동 로그·`/health` 가 데이터 출처를 노출 |
+| `app/workers/me/my_week.py` · `app/prompts/my_week.py` | **`me.my_week` 축 신설** |
+| `app/prompts/analysis_router.py` | `me` 도메인 추가 + 사고가 난 질문을 첫 few-shot 으로 |
+
+### 기동 로그 · `/health` 에 데이터 출처 노출
+
+이게 안 보여서 배포가 픽스처로 도는 걸 아무도 몰랐다. 이제 둘 다 같은 값을 낸다.
+
+```json
+{"mode": "fixtures", "mockBackend": true, "backendBaseUrl": "http://localhost:3001",
+ "internalApiKeySet": false, "inboundApiKeySet": false}
+```
+
+픽스처 모드이거나 `INTERNAL_API_KEY` 가 비어 있으면 기동 때 경고를 찍는다.
+**키 값 자체는 절대 싣지 않는다** — 설정 여부(bool)만 낸다.
+
+### `me.my_week` — 사고가 난 질문의 정답 경로
+
+`/me` · `/tasks`(본인 주간) · `/schedules`(본인) · `/leaves/balance`(본인) 넷만 쓴다.
+`userIds` 를 안 실으면 BE 가 `X-Run-Id` 로 역산한 본인으로 스코프를 고정하므로,
+**남의 데이터가 섞일 경로가 구조적으로 없다.** 도구도 주지 않았다 — 컨텍스트가 곧 전부고
+더 찾아 헤맬 곳이 없어야 한다.
+
+라우터 프롬프트에 "주어가 '나'면 me 하나로 끝낸다"를 못 박고, 실제로 틀렸던 질문을
+첫 번째 few-shot 으로 박아뒀다.
+
+### Validator 게이트
+
+재시도로도 `error` 를 못 고친 축은 통합에서 **제외**한다. 예전에는 "남은 위반을 그대로
+보고한다"며 근거가 틀린 축까지 답변에 실었다 — 존재하지 않는 할 일을 인용한 위험 분석이
+그대로 사용자에게 나갔다. 이제 그 축은 `context.skipped` 로 옮겨 "확인하지 못함"이 된다.
+
+### `UNKNOWN_SUBJECT` 오탐 수정
+
+한 위험이 여러 할 일에 걸리는 게 정상이라 모델은 `subject` 한 칸에
+`"todo:101, todo:102, todo:106"` 처럼 몰아 적는다. 검증기가 앞 5글자만 잘라 비교해서
+**실재하는 할 일을 "없다"고 잡고 있었다.** 정규식으로 참조를 전부 뽑아 각각 대조하도록
+고쳤고, `RiskItem.subject` 도 `subjects: list[str]` 로 바꿨다.
 
 ### 삭제한 툴
 
@@ -214,11 +252,21 @@ Context Builder 뒤에서 **코드가** 판정한다. 근거가 없는 축은 �
 
 | | 내용 |
 |---|---|
-| **`me.my_week` 축 신설** | 본인 스코프 질문(`/me`·`/tasks`·`/schedules`·`/leaves/balance`) 전담. 1장의 사고가 원래 갔어야 할 경로. **`Domain` 어휘 추가가 필요해 담당자 1·3과 협의 후 진행** |
-| **Validator 게이트** | 미해소 `error` 가 남은 축을 답변에서 제외. 현재는 재시도 한도를 넘으면 그대로 나간다 |
 | **게시글 컨텍스트** | `/projects/{id}/posts` 미반영 |
 | **픽스처 격리** | `demo_data` 를 `app/tests/fixtures/` 로 이동 + `app/tools/` import 금지 테스트 |
 | **`AnalysisContext.workloads` 개명** | `availabilities` 로. 내부 필드명이라 기능에는 영향 없어 후순위 |
+| **`Domain.me` 하위 호환 확인** | `request.py`·`response.py` 가 공유하는 어휘라 담당자 1·3 쪽 처리 확인 필요 |
+
+### 검증
+
+| 스위트 | 결과 |
+|---|---|
+| `test_workers` | 57 통과 |
+| `test_backend_mapping` · `test_vacation_worker` | 15 통과 |
+| `test_internal_api_auth` · `test_engine_b_history_wiring` · `test_mail_domain_registered` | 16 통과 |
+| 도구 배터리 (`app.tests.test_tools`) | 전부 통과 |
+
+LLM 을 태우는 무거운 스위트(`test_engine_b` 등)는 돌리지 않았다.
 
 ---
 

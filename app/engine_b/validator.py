@@ -8,6 +8,7 @@ LLM 에게 "규칙을 지켰는지 확인해줘"라고 다시 묻지 않는다. 
 warning 은 루프를 돌리지 않고 최종 결과에 그대로 붙여 사용자에게 보여준다.
 """
 
+import re
 from typing import Any, Callable
 
 from app.config import get_settings
@@ -239,6 +240,21 @@ def _check_priority(
 
 # ─── risk ─────────────────────────────────────────────────────────
 
+_SUBJECT_REF = re.compile(r"(todo|user):(\d+)")
+
+
+def _subject_refs(item: dict[str, Any]) -> list[tuple[str, str]]:
+    """지목 대상에서 'todo:101' 형태 참조를 전부 뽑는다.
+
+    한 위험이 여러 할 일에 걸리는 게 정상이라, 모델은 subject 한 칸에
+    "todo:101, todo:102" 처럼 몰아넣는다. 앞 5글자를 잘라 비교하던 예전 방식은
+    그걸 통째로 '없는 id' 로 오판해 UNKNOWN_SUBJECT 오탐을 냈다.
+    """
+    raw = item.get("subjects") or item.get("subject") or ""
+    text = " ".join(str(x) for x in raw) if isinstance(raw, list) else str(raw)
+    return _SUBJECT_REF.findall(text)
+
+
 def _check_risk(
     output: WorkerOutput, context: AnalysisContext, report: ValidationReport
 ) -> None:
@@ -273,24 +289,16 @@ def _check_risk(
                 subject=title,
             )
 
-        subject = str(item.get("subject", ""))
-        if subject.startswith("todo:") and subject[5:] not in known_todos:
+        for kind, ref in _subject_refs(item):
+            if ref in (known_todos if kind == "todo" else known_users):
+                continue
             _add(
                 report,
                 output,
                 "UNKNOWN_SUBJECT",
-                f"'{title}' 이 지목한 {subject} 가 데이터에 없다.",
+                f"'{title}' 이 지목한 {kind}:{ref} 가 데이터에 없다.",
                 "실제 존재하는 할 일/구성원만 지목하라.",
-                subject=subject,
-            )
-        if subject.startswith("user:") and subject[5:] not in known_users:
-            _add(
-                report,
-                output,
-                "UNKNOWN_SUBJECT",
-                f"'{title}' 이 지목한 {subject} 가 데이터에 없다.",
-                "실제 존재하는 할 일/구성원만 지목하라.",
-                subject=subject,
+                subject=f"{kind}:{ref}",
             )
 
         if not str(item.get("mitigation", "")).strip():

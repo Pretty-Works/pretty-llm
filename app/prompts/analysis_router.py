@@ -34,17 +34,23 @@ SYSTEM = """\
       인력 추천·회의 슬롯 요청도 analysis 로 답한다.
 
 2. domains : 이 질문에 실제로 필요한 도메인만 고른다.
+   - me       : **내** 할 일 · 내 일정 · 내 잔여 연차. 주어가 사용자 자신인 질문
    - project  : 프로젝트의 진척 · 일정 · 위험 · 비용
-   - hcm      : 사람 배치, 업무 부하, 적임자 판단
+   - hcm      : 프로젝트 참여자의 가용성, 작업 성격에 맞는 역할 찾기
    - meeting  : 회의 시간대 잡기
    - vacation : 휴가로 생기는 공백과 그 리스크
+
+   ★ 주어가 "나"면 me 하나로 끝낸다. "뭐부터 할까", "휴가 언제 쓸까", "이번 주 어때"는
+     전부 me 다. 여기에 project 나 hcm 을 얹지 마라 — 프로젝트를 특정할 수 없는 질문에
+     프로젝트 분석을 붙이면 엉뚱한 대상을 끌어온다.
+   ★ hcm 은 **대상 프로젝트가 있을 때만** 고른다. 참여자 명단이 없으면 아무것도 못 본다.
 
    ★ 매우 중요: 도메인을 고르면 그 도메인의 워커가 **전부 병렬로 실행**된다.
      (project 를 고르면 우선순위·위험·비용이 모두 돈다.)
      그러니 "혹시 몰라서" 도메인을 추가하지 마라. 필요한 것만 골라야 비용이 안 샌다.
 
 3. focus : 어느 축을 **강조**할지. 실행 여부와는 무관하다.
-   가능한 값: priority, risk, cost, skill_fit, workload
+   가능한 값: priority, risk, cost, skill_fit, workload, my_week
    질문이 특정 축을 겨냥하면 그 축을 넣고, 두루뭉술하면 빈 배열로 둔다.
 
 4. objective : 사용자가 실제로 얻고 싶은 것을 한 문장으로 다시 쓴다.
@@ -74,6 +80,22 @@ SYSTEM = """\
 
 FEW_SHOTS = [
     {
+        # 실제 배포에서 틀렸던 질문이다. 주어가 "나"인데 프로젝트 분석으로 끌려갔고,
+        # 대상을 못 찾자 전사 명부를 뒤져 남의 이름이 답변에 실렸다.
+        "query": "할 일도 많고 휴가도 신청해야하고 업무도 해야하는데 뭐부터 하는게 좋을까",
+        "ui": "screen=home",
+        "answer": {
+            "mode": "analysis",
+            "domains": ["me"],
+            "focus": ["my_week"],
+            "objective": "내 이번 주 할 일의 처리 순서와 휴가를 쓸 만한 날을 정한다",
+            "entities": {},
+            "constraints": [],
+            "reasoning": "주어가 사용자 본인이고 내 할 일·휴가만 보면 답이 나온다. 대상 프로젝트가 특정되지 않아 project/hcm 을 얹으면 엉뚱한 대상을 끌어온다.",
+            "confidence": 0.9,
+        },
+    },
+    {
         "query": "그룹웨어 리뉴얼 프로젝트 지금 상태 어때? 위험한 거 있으면 알려줘",
         "ui": "screen=project_detail, project_id=1001",
         "answer": {
@@ -88,16 +110,16 @@ FEW_SHOTS = [
         },
     },
     {
-        "query": "이민주 대리가 8월 초에 휴가 가는데 프로젝트 일정 괜찮을까?",
+        "query": "김민석 대리가 8월 초에 휴가 가는데 프로젝트 일정 괜찮을까?",
         "ui": "screen=project_detail, project_id=1001",
         "answer": {
             "mode": "analysis",
             "domains": ["vacation"],
             "focus": [],
-            "objective": "이민주의 8월 초 부재가 프로젝트 일정에 주는 영향을 확인한다",
+            "objective": "김민석의 8월 초 부재가 프로젝트 일정에 주는 영향을 확인한다",
             "entities": {
                 "project_ids": [1001],
-                "user_names": ["이민주"],
+                "user_names": ["김민석"],
                 "date_from": "2026-08-01",
                 "date_to": "2026-08-31",
             },
@@ -191,10 +213,10 @@ FEW_SHOTS = [
             "mode": "analysis",
             "domains": ["hcm"],
             "focus": ["skill_fit"],
-            "objective": "AI 에이전트 도입 프로젝트에 투입할 적임자를 추천한다",
+            "objective": "AI 에이전트 도입 프로젝트의 남은 작업이 어느 역할의 일인지, 그 역할을 맡은 참여자가 누구인지 정리한다",
             "entities": {"project_ids": [1003]},
             "constraints": [],
-            "reasoning": "사람 배치 질문이라 hcm 만으로 충분하다. 프로젝트 진척/비용 분석은 필요 없다.",
+            "reasoning": "역할 매칭 질문이라 hcm 만으로 충분하다. 다만 프로젝트 밖 인원은 조회할 수 없으므로 참여자 범위 안에서 답한다.",
             "confidence": 0.87,
         },
     },

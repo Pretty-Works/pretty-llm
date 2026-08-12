@@ -104,6 +104,22 @@ def test_health_endpoint_stays_open():
         assert verify_internal_api_key not in calls
 
 
+def test_health가_데이터_출처를_알려준다():
+    """★ 배포가 픽스처로 도는 걸 아무도 몰랐다(2026-08-11). 키 값은 싣지 않는다."""
+    from app.main import health
+
+    payload = health()
+    data = payload["data"]
+
+    assert data["mode"] in {"fixtures", "backend"}
+    assert set(data) == {
+        "mode", "mockBackend", "backendBaseUrl", "internalApiKeySet", "inboundApiKeySet"
+    }
+    # 키 자체가 실리면 /health 로 시크릿이 새어나간다
+    assert isinstance(data["internalApiKeySet"], bool)
+    assert isinstance(data["inboundApiKeySet"], bool)
+
+
 async def test_passes_when_key_unset(monkeypatch):
     """BE 키 발급 전(임시 상태) — 헤더가 없어도 막지 않는다."""
     from app.config import get_settings
