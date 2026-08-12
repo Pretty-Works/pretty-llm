@@ -96,29 +96,73 @@ from app.common.run_context import current_run_id
 from app.tools.registry import WRITE_TOOLS, RunContext, build_request, catalog_name, is_mcp_write
 
 # 도구 이름 → 사용자에게 보여줄 진행 문구 (step.text 는 FE 에 그대로 노출됨)
+#   ★ 도구를 추가하면 여기도 채운다. 빠뜨리면 "ask_user 실행 중..." 처럼 **영어
+#     도구 이름이 사용자 화면에 그대로 노출된다** (실사용 피드백: "ask_user 가 뭐죠?").
+#     규격: step.text 는 "사용자에게 보일 한국어 한 줄, 100자 이하".
 _STEP_TEXT = {
+    # 조회 — 사람
+    "user_me": "오늘 날짜와 내 정보를 확인하는 중...",
+    "user_search": "사원을 찾는 중...",
+    # 조회 — 프로젝트
     "project_search": "프로젝트를 찾는 중...",
-    "project_members": "참석자 정보를 확인하는 중...",
+    "project_members": "참여자 정보를 확인하는 중...",
+    "milestone_list": "마일스톤을 확인하는 중...",
+    "budget_summary": "예산 현황을 확인하는 중...",
+    "expense_list": "지출 내역을 확인하는 중...",
+    # 조회 — 일감
+    "task_list": "할 일을 확인하는 중...",
     "meeting_list": "회의록 목록을 확인하는 중...",
+    "meeting_detail": "회의록 내용을 읽는 중...",
+    "schedule_list": "일정을 확인하는 중...",
+    "leave_balance": "연차 잔여를 확인하는 중...",
+    "leave_list": "휴가 내역을 확인하는 중...",
+    "task_due_within": "그 기간 마감인 할 일을 정리하는 중...",
+    # 기억·문서
+    "recall": "예전 기록을 찾아보는 중...",
+    "doc_search": "사내 문서를 찾아보는 중...",
+    # ★ 문구에 "왜 부르는지"를 담는다 — 엔진 B 는 오래 걸리는데 "분석 중"만 뜨면
+    #   사용자는 멈춘 줄 안다. 판단이 애매해서 깊이 보는 중이라고 알려준다.
+    "analyze_impact": "판단이 애매해 조금 더 깊이 분석하는 중...",
+    "propose_replan_scenarios": "일정·인력·범위 조정안 3가지를 만드는 중...",
+    # 쓰기 (승인 카드 직전)
     "meeting_create": "회의록을 저장하는 중...",
-    # ★ 8/12 추가 — 연차 1차 판단(엔진 A) → 조건부 심층분석(엔진 B) 흐름이
-    #   승인 카드만 툭 뜨는 게 아니라 각 단계가 SSE step 으로 보이게 한다.
-    "leave_balance": "잔여 연차를 확인하는 중입니다...",
-    # ★ 8/12 수정 — schedule_list·task_list 는 연차 도메인 전용이 아니라 회의록·할일
-    #   도메인에서도 부른다(각각 회의 날짜 후보 찾기, 주간 할일 조회). 도메인별
-    #   문구를 못 나누는 구조(도구 이름 하나에 문구 하나)라, 특정 도메인 얘기처럼
-    #   안 들리게 중립적인 문구로 바꿨다.
-    "schedule_list": "관련 일정을 확인하는 중입니다...",
-    "task_list": "할일 목록을 확인하는 중입니다...",
-    "analyze_impact": "판단이 애매해 조금 더 깊이 있게 분석하고 있습니다...",
-    "leave_create": "연차 신청을 진행하는 중입니다...",
-    "task_update": "할일 내용을 수정하는 중입니다...",
-    "task_due_within": "그 기간 마감인 할일을 정리하는 중입니다...",
-    # ★ 8/12 추가 — 재계획(replan) 흐름도 내부 함수명이 그대로 노출되던 것을 정리
-    "propose_replan_scenarios": "일정·인력·범위 조정안 3가지를 분석하고 있습니다...",
-    "replan_save": "선택하신 조정안을 저장하는 중입니다...",
-    "replan_apply": "조정안을 프로젝트에 반영하는 중입니다...",
+    "meeting_draft_fill": "회의록 초안을 작성하는 중...",
+    "task_create": "할 일을 등록하는 중...",
+    "task_toggle_status": "할 일 상태를 바꾸는 중...",
+    "task_update": "할 일 내용을 수정하는 중...",
+    "schedule_create": "일정을 등록하는 중...",
+    "schedule_update": "일정을 변경하는 중...",
+    "leave_create": "휴가를 신청하는 중...",
+    "leave_update": "휴가 신청을 변경하는 중...",
+    "expense_create": "지출을 등록하는 중...",
+    "milestone_toggle_status": "마일스톤 상태를 바꾸는 중...",
+    "replan_save": "재계획 안을 저장하는 중...",
+    "replan_apply": "재계획을 반영하는 중...",
+    # 상호작용
+    "ask_user": "확인이 필요해 여쭤보는 중...",
+    "navigate": "이동할 화면을 준비하는 중...",
+    "fill_form": "화면에 채울 내용을 준비하는 중...",
 }
+
+# MCP 로 동적으로 붙는 도구는 이름이 서버에서 오므로 접두사로 받는다.
+_STEP_TEXT_PREFIX = {
+    "gmail_send": "메일을 보내는 중...",
+    "gmail_": "메일을 확인하는 중...",
+}
+
+
+def _step_text(tool_name: str) -> str:
+    """도구 이름 → 사용자에게 보일 한국어 한 줄.
+
+    등록되지 않은 도구라도 **영어 이름을 노출하지 않는다** — 사용자는 우리 내부
+    도구명을 알 이유가 없고, 실제로 "ask_user 가 뭐죠?" 라는 피드백을 받았다.
+    """
+    if tool_name in _STEP_TEXT:
+        return _STEP_TEXT[tool_name]
+    for prefix, text in _STEP_TEXT_PREFIX.items():
+        if tool_name.startswith(prefix):
+            return text
+    return "작업을 진행하는 중..."
 
 # approvalId·questionId 는 우리가 만들지 않는다 — BE 가 주입한다 (규격 명시:
 # "questionId: BE가 주입한다. LLM은 보내지 않는다". approval 도 동일 구조)
@@ -239,7 +283,7 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
                         continue
                     seen_calls.add(tc["id"])
                     tool_call_ids[tc["name"]] = tc["id"]
-                    yield sse.step(_STEP_TEXT.get(tc["name"], f"{tc['name']} 실행 중..."))
+                    yield sse.step(_step_text(tc["name"]))
                 # ③ 최종 답 후보 (도구 호출 없는 AI 텍스트)
                 if getattr(msg, "type", "") == "ai" and not getattr(msg, "tool_calls", None):
                     final_text = msg.text if isinstance(msg.text, str) else msg.content
@@ -292,9 +336,14 @@ async def _approval_payload(interrupts, tool_call_ids: dict[str, str], run_id: s
         #   여기서 방출한 params 와 실행 시 보낼 바디가 항상 같아야 한다 (AGENT_015).
         _method, _path, params = build_request(tool_name, args)
 
-    # summary: 미들웨어 description(요청별 → 전체 순) → 없으면 기본 문구. 60자 제한
+    # summary: 규격은 "카드 제목 한 줄, 60자 이하". 미들웨어가 만드는 description 은
+    #   "{prefix}\n\nTool: meeting_create\nArgs: {...}"
+    # 처럼 여러 줄이라 그대로 넣으면 규격을 어기고, 앞 60자를 잘라도 사람에게 쓸모없는
+    # Args 조각만 남는다(prefix+Tool 이 35자라 경계가 Args 한가운데 떨어짐 — 실측).
+    # 그래서 우리가 준 첫 줄(description_prefix)만 쓰고 나머지 디버그 줄은 버린다.
     desc = req.get("description") or (value.get("description") if isinstance(value, dict) else "")
-    summary = (str(desc).strip() or f"{catalog_name(tool_name)} 실행 승인 요청")[:60]
+    head = next((ln.strip() for ln in str(desc or "").splitlines() if ln.strip()), "")
+    summary = " ".join(head.split())[:60] or f"{catalog_name(tool_name)} 실행 승인 요청"
 
     preview_text = "\n".join(f"· {k}: {v}" for k, v in params.items() if v is not None)
 

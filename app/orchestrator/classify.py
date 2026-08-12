@@ -56,6 +56,19 @@ engine_b — 판단이 필요한 깊은 분석·비교·시뮬레이션·재계�
   "위험한지 분석해보고 괜찮으면 연차 신청해줘" → engine_a (주목적 = 신청)
   "연차 내면 위험한지만 분석해줘" → engine_b (주목적 = 분석)
 
+⚠️ **직전 대화를 이어받는 짧은 발화는 그 작업의 도메인으로 보낸다.** 문장만 떼어
+   놓고 보면 조회처럼 보여도 simple_query 로 보내면 안 된다 — 조회 에이전트는
+   쓰기 도구가 없어서 이어서 등록·저장을 못 하고, 연쇄가 거기서 끊긴다.
+   · 승낙: "응", "그래", "그렇게 해줘", "부탁해" (뒤에 "다음주 화요일로" 같은
+     조건이 붙어도 마찬가지다)
+     → 직전 답변에서 제안한 **그 작업 하나의 도메인만** + engine_a.
+       ★ domains 에 **한 개만** 넣어라 — 제안의 배경으로 언급된 도메인(할일
+       때문에 일정을 잡는 경우의 task 등)을 같이 넣으면 복합 요청으로 잘못
+       분해돼 엉뚱한 작업이 하나 더 실행된다.
+   · 완료 보고: "회의록 등록했어", "저장했어", "다 썼어", "올렸어"
+     → 그 대상 도메인 + engine_a (이어서 후속 처리를 해야 하므로 조회 아님)
+   최근 대화(messages)를 보고 무슨 작업이 진행 중이었는지 판단하라.
+
 애매하면: 저장/신청이 필요해 보이면 engine_a, 답만 주면 되면 simple_query.
 
 ## domains — 요청이 건드리는 도메인 전부 (빠뜨리지 말 것)
@@ -88,7 +101,10 @@ _llm = None
 def _get_llm():
     global _llm
     if _llm is None:
-        model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider)
+        # temperature 를 안 넘기면 provider 기본값으로 돌아 같은 질문에도 도구 선택이
+        # 흔들린다 (실측: 동일 입력 5회에 응답 2가지). 라우팅·도구 선택은 결정적이어야 한다.
+        model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider,
+                                    temperature=settings.llm_temperature)
         _llm = model.with_structured_output(RouteDecision)
     return _llm
 
