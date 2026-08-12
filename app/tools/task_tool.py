@@ -29,16 +29,21 @@ async def task_list(projectId: int | None, weekOffset: int,
         params["projectId"] = projectId
     r = await backend.get("/tasks", run_id=runtime.context.run_id, **params)
 
+    key = f"task_list:{projectId}:{weekOffset}"
     if not r["tasks"]:
-        return f"{r['weekStart']}~{r['weekEnd']} 에 등록된 할 일이 없습니다."
+        result = f"{r['weekStart']}~{r['weekEnd']} 에 등록된 할 일이 없습니다."
+        runtime.context.known_facts[key] = result
+        return result
     lines = []
     for t in r["tasks"]:
         flags = ("✔" if t["completed"] else "□") + (" (지난주 이월)" if t["isCarryOver"] else "")
         proj = f" / {t['projectName']}" if t["projectName"] else " / 개인"
         lines.append(f"- [{t['taskId']}] {flags} {t['content']} (마감 {t['dueDate']}{proj})")
     s = r["summary"]
-    return (f"{r['weekStart']}~{r['weekEnd']} 할일 {s['total']}건 "
-            f"(완료율 {s['completionRate']}% — 서버 계산값):\n" + "\n".join(lines))
+    result = (f"{r['weekStart']}~{r['weekEnd']} 할일 {s['total']}건 "
+              f"(완료율 {s['completionRate']}% — 서버 계산값):\n" + "\n".join(lines))
+    runtime.context.known_facts[key] = result   # analyze_impact 가 재사용 (주별로 구분 보관)
+    return result
 
 
 @tool

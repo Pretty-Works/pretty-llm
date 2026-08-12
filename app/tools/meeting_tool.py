@@ -38,13 +38,17 @@ async def meeting_list(projectId: int, runtime: ToolRuntime[RunContext]) -> str:
     )
     items = r.get("meetings", [])
     if not items:
-        return f"프로젝트 {projectId} 에 등록된 회의록이 없습니다."
+        result = f"프로젝트 {projectId} 에 등록된 회의록이 없습니다."
+        runtime.context.known_facts[f"meeting_list:{projectId}"] = result
+        return result
 
     lines = [f"- [{m['meetingId']}] {m['title']} ({m['meetingDate']}"
              + (f", {m['location']}" if m.get("location") else "")
              + f", 작성 {m.get('authorName', '?')})" for m in items]
-    return (f"회의록 {r.get('totalCount', len(items))}건 (본문은 meeting_detail 로):\n"
-            + "\n".join(lines))
+    result = (f"회의록 {r.get('totalCount', len(items))}건 (본문은 meeting_detail 로):\n"
+              + "\n".join(lines))
+    runtime.context.known_facts[f"meeting_list:{projectId}"] = result
+    return result
 
 
 @tool
@@ -63,11 +67,13 @@ async def meeting_detail(projectId: int, meetingId: int,
                           run_id=runtime.context.run_id)
     att = ", ".join(f"[{a['userId']}] {a['name']}" for a in r["attendees"])
     edit = "수정 가능" if r["canEdit"] else "수정 불가(작성자·참석자 아님)"
-    return (f"회의록 [{r['meetingId']}] {r['title']} ({r['meetingDate']}, "
-            f"{r.get('location') or '장소 미기재'}, {r['documentNo']}, {edit})\n"
-            f"작성: {r['authorName']} / 참석: {att}\n"
-            f"목적: {r.get('purpose') or '-'}\n내용: {r.get('content') or '-'}\n"
-            f"후속 조치: {r.get('followUp') or '-'}")
+    result = (f"회의록 [{r['meetingId']}] {r['title']} ({r['meetingDate']}, "
+              f"{r.get('location') or '장소 미기재'}, {r['documentNo']}, {edit})\n"
+              f"작성: {r['authorName']} / 참석: {att}\n"
+              f"목적: {r.get('purpose') or '-'}\n내용: {r.get('content') or '-'}\n"
+              f"후속 조치: {r.get('followUp') or '-'}")
+    runtime.context.known_facts[f"meeting_detail:{meetingId}"] = result
+    return result
 
 
 @tool

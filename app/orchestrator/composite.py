@@ -117,6 +117,8 @@ async def stream_composite(run_id: str, ctx: RunContext, plan: dict,
         agent = await agent_for_domain(st["domain"])
         sink: dict = {}
         ctx.action = None          # 작업마다 초기화 — 마지막 작업의 action 이 done 에 실림
+        ctx.known_facts.clear()    # 이전 서브태스크(다른 도메인)의 조회 결과가
+                                    # 이번 서브태스크의 analyze_impact 로 새는 것을 막는다
 
         if resume_command is not None:
             agent_input = resume_command

@@ -72,9 +72,12 @@ class GmailMcpSettings(BaseSettings):
     # 있는 것과 같은 Spring BE라서, 값도 app/config.py의 backend_base_url과 동일하게
     # BACKEND_BASE_URL 환경변수를 그대로 재사용한다 — 관리 포인트를 늘리지 않으려는 의도.
     backend_base_url: str = Field(default="http://localhost:3001", validation_alias="BACKEND_BASE_URL")
-    # BE 팀 API 스펙 나오면 실제 경로로 맞춘다({run_id}는 str.format으로 치환).
+    # ★ 2026-08-12 BE 확정 — GET /api/internal/agent/runs/{runId}/user.
+    #   ({run_id}는 str.format으로 치환하는 자리라 스네이크케이스 그대로 둔다 — BE
+    #   문서의 {runId} 표기와 이름만 다를 뿐 같은 자리다.) .env 로 얼마든지 덮어쓸 수
+    #   있지만, 기본값 자체도 실제 확정된 경로로 맞춰 둔다.
     run_lookup_path_template: str = Field(
-        default="/internal/runs/{run_id}/user",
+        default="/api/internal/agent/runs/{run_id}/user",
         validation_alias="GMAIL_MCP_RUN_LOOKUP_PATH_TEMPLATE",
     )
     run_lookup_timeout_s: float = 5.0

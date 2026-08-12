@@ -210,7 +210,7 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
                 payload = {k: v for k, v in value.items() if k != "kind"}
                 yield sse.sse_event("question", payload)
             else:
-                payload = _approval_payload(update["__interrupt__"], tool_call_ids)
+                payload = await _approval_payload(update["__interrupt__"], tool_call_ids, run_id)
                 yield sse.sse_event("approval_request", payload)
             return
 
@@ -243,8 +243,14 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
                            ctx.goal or "", final_text))
 
 
-def _approval_payload(interrupts, tool_call_ids: dict[str, str]) -> dict:
-    """middleware 의 __interrupt__ → 규격 approval_request 페이로드."""
+async def _approval_payload(interrupts, tool_call_ids: dict[str, str], run_id: str) -> dict:
+    """middleware 의 __interrupt__ → 규격 approval_request 페이로드.
+
+    ★ 8/12 추가 — leave_create 는 여기서 도구별 사전 경고를 한 번 더 얹는다.
+      "신청" 승인 카드가 뜨기 전에 잔여 초과·마감 겹침을 previewText 에 보여줘야
+      사용자가 승인 버튼을 누르기 "전에" 알 수 있다 (leave_create 실행 시점
+      경고는 이미 승인한 뒤라 너무 늦다). 다른 도구는 영향 없다.
+    """
     value = interrupts[0].value
     req = (value.get("action_requests") or [{}])[0] if isinstance(value, dict) else value[0]
     tool_name = req.get("action") or req.get("name", "")
@@ -267,12 +273,24 @@ def _approval_payload(interrupts, tool_call_ids: dict[str, str]) -> dict:
     desc = req.get("description") or (value.get("description") if isinstance(value, dict) else "")
     summary = (str(desc).strip() or f"{catalog_name(tool_name)} 실행 승인 요청")[:60]
 
+    preview_text = "\n".join(f"· {k}: {v}" for k, v in params.items() if v is not None)
+
+    if tool_name == "leave_create":
+        from app.tools.leave_tool import preview_leave_risks
+        try:
+            risk = await preview_leave_risks(
+                run_id, args.get("leaveType"), args.get("startDate"), args.get("endDate"))
+        except Exception:
+            risk = ""
+        if risk:
+            preview_text = f"⚠️ {risk}\n" + preview_text
+
     payload = {
         "toolCallId": tool_call_ids.get(tool_name, ""),
         "tool": catalog_name(tool_name),
         "access": "WRITE",               # 조회는 interrupt 대상이 아니므로 항상 WRITE
         "summary": summary,
-        "previewText": "\n".join(f"· {k}: {v}" for k, v in params.items() if v is not None),
+        "previewText": preview_text,
         "params": params,
     }
     # 승인/거절 외의 제3 선택지 (규격: 선택 필드, {id,label}. "ALWAYS" id 는 BE 예약)

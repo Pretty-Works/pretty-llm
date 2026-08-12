@@ -55,6 +55,12 @@ class RunContext:
     # 채팅에 첨부된 파일 [{name, content}] — BE 가 텍스트 추출해 runs 바디로 보낸다.
     attachments: list[dict] | None = None
 
+    # ★ 8/12 추가 — 이번 turn에서 읽기 도구가 이미 조회한 사실(사람이 읽는
+    #   요약 문자열)의 캐시. analyze_impact 가 엔진 B 를 부르기 직전에 이걸
+    #   질문에 그대로 이어붙인다 — LLM 이 요약하다 놓치는 걸 막기 위해서다.
+    #   LLM 은 이 필드를 못 보고, 도구만 채우고 읽는다.
+    known_facts: dict[str, str] = field(default_factory=dict)
+
 
 # ─────────────────────────────────────────────────────────────
 # ② 승인 등급 — auto 모드 정책

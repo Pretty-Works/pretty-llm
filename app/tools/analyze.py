@@ -8,6 +8,15 @@ analyze_impact — 엔진 A 공용 심층 분석 도구 (엔진 B 를 도구로 
 step 이 안 나가 90초 무이벤트 차단에 걸릴 수 있다. 그래서 엔진 B 의
 progress 를 runtime.stream_writer 로 밀어 넣고, hitl._drive 가
 stream_mode="custom" 으로 받아 step 이벤트로 방출한다.
+
+★ 8/12 추가 — 엔진 A 가 이번 turn에서 이미 조회한 사실(RunContext.known_facts,
+  leave_balance/schedule_list/task_list 등이 채워둔다)을 질문에 코드로
+  그대로 이어붙인다. 이전에는 "겹치는 일정을 질문에 그대로 담아라"를
+  프롬프트로만 지시했는데, LLM 이 요약하다 정확한 값(며칠 남았는지, 정확히
+  어떤 일정인지)을 놓치거나 다르게 쓸 수 있었다 — 엔진 B 는 원본 텍스트를
+  그대로 받는다. 엔진 B 는 여전히 자기 데이터도 따로 조회한다(중복은 나지만
+  최신성 보장); 이건 "새로 조회 안 함"이 아니라 "LLM 요약에만 기대지 않고
+  원본 사실도 같이 준다"는 보강이다.
 """
 
 from __future__ import annotations
@@ -16,6 +25,13 @@ from langchain.tools import ToolRuntime, tool
 
 from app.engine_b.runner import run_engine_b
 from app.tools.registry import RunContext
+
+
+def _with_known_facts(question: str, known_facts: dict[str, str]) -> str:
+    if not known_facts:
+        return question
+    block = "\n".join(f"- {v}" for v in known_facts.values())
+    return f"{question}\n\n[이번 대화에서 이미 확인된 사실 — 그대로 신뢰할 것]\n{block}"
 
 
 @tool
@@ -29,11 +45,14 @@ async def analyze_impact(question: str, runtime: ToolRuntime[RunContext]) -> str
 
     question: 분석할 질문을 완결된 한 문장으로
               (예: "이하늘이 8/11 하루 빠지면 베타 오픈 일정에 위험이 있는가?")
+              이미 조회한 잔여·일정·할일 같은 세부 수치는 다시 요약해 넣지
+              않아도 된다 — known_facts 에 있으면 코드가 그대로 덧붙인다.
     """
     ctx = runtime.context
     answer = "분석 결과를 받지 못했습니다."
+    full_question = _with_known_facts(question, ctx.known_facts)
 
-    async for ev in run_engine_b(question, ctx.run_id):
+    async for ev in run_engine_b(full_question, ctx.run_id):
         if ev["type"] == "progress" and runtime.stream_writer:
             runtime.stream_writer({"text": ev["text"]})     # → _drive 가 step 으로 방출
         elif ev["type"] == "result":
