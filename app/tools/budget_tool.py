@@ -5,8 +5,13 @@
 잔여 예산을 볼 때 committed 를 빼먹으면 실제보다 여유가 있어 보이므로 항상 같이 본다.
 
 조회 창구는 clients/backend.py 하나다 (2026-08-07 통일 — X-Run-Id 는 run_context 로 전파).
-mock 모드·run_id 부재·호출 실패면 demo_data 픽스처로 폴백한다.
-budget·expenses 는 내부도구 명세 확정, 결재 중(approvals)은 명세가 없어 픽스처 전용이다.
+★ 8/12 수정 — mock 모드라고 여기서 곧장 demo_data 로 안 간다(project_query.py 와
+같은 이유 — backend.get() 은 mock_backend=True 여도 이미 _mock_get() 픽스처를
+쓰므로, 그걸 우회하면 Engine A 화면이 보는 mock 프로젝트 예산과 Engine B cost
+워커가 보는 예산이 서로 다른 프로젝트 것처럼 어긋난다). budget·expenses 는
+_mock_get() 이 이미 커버하니 mock 이든 실백엔드든 항상 backend.get() 을 먼저
+시도하고, run_id 부재·호출 실패일 때만 demo_data 로 폴백한다.
+결재 중(approvals)은 아직 내부도구 명세 자체가 없어 여전히 픽스처 전용이다.
 """
 
 import json
@@ -16,7 +21,6 @@ from langchain_core.tools import tool
 
 from app.clients.backend import backend
 from app.common.run_context import current_run_id
-from app.config import get_settings
 from app.tools import demo_data
 from app.utils.logger import get_logger
 
@@ -31,9 +35,8 @@ def _json(payload: Any) -> str:
 
 
 async def _get(path: str, **params: Any) -> Any | None:
-    """실백엔드 조회. mock 모드·run_id 부재·실패면 None — 호출부가 픽스처로 폴백한다."""
-    if get_settings().uses_fixtures:
-        return None
+    """백엔드 조회(mock 이든 실백엔드든 backend.get() 창구 하나로 통일). run_id
+    부재·호출 실패면 None — 호출부가 demo_data 픽스처로 폴백한다."""
     run_id = current_run_id.get()
     if not run_id:
         log.warning("run_id 없이 내부도구 호출: %s — 픽스처 폴백", path)
