@@ -8,12 +8,17 @@
 전부 읽기 전용이므로 HITL 승인 대상이 아니다.
 
 조회 창구는 clients/backend.py 하나다 (2026-08-07 통일 — X-Run-Id 는 run_context 로 전파).
-★ 8/12 수정 — mock 모드라고 여기서 곧장 demo_data 로 안 간다. backend.get() 이
-mock_backend=True 일 때 이미 알아서 _mock_get() 픽스처를 쓰므로, mock 이든
-실백엔드든 항상 backend.get() 을 먼저 시도한다. run_id 부재·호출 실패일 때만
-demo_data 픽스처로 폴백한다 — 그래야 Engine A 도구들이 보는 mock 프로젝트와
-Engine B 가 분석하는 프로젝트가 같은 데이터를 가리킨다.
+★ 8/12 — mock 모드라고 여기서 곧장 우회하지 않는다. backend.get() 이
+mock_backend=True 일 때 이미 _mock_get() 을 쓰므로, 그걸 또 우회하면 Engine A 도구가
+보는 데이터와 Engine B 가 분석하는 데이터가 서로 다른 회사인 것처럼 어긋난다.
+★ 8/11 — 그렇다고 실패 시 demo_data 로 메우지도 않는다. 조용한 폴백이 무음이라
+배포가 가짜 데이터로 도는 걸 아무도 몰랐다. 조회 실패는 **빈 결과**이고,
+호출부가 '확인 못 함'으로 처리한다.
 프로젝트 상세(project.detail)는 ⛔ v1 제외라 목록(project.search)에서 집어 쓴다.
+
+★ 2026-08-11 픽스처 폴백 제거.
+  조회 실패는 픽스처로 메우지 않고 **빈 결과**로 낸다. 폴백이 무음이라 배포가
+  가짜 데이터로 도는 걸 아무도 몰랐다. 없으면 없다고 답하는 쪽이 낫다.
 """
 
 import json
@@ -23,7 +28,6 @@ from langchain_core.tools import tool
 
 from app.clients.backend import backend
 from app.common.run_context import current_run_id
-from app.tools import demo_data
 from app.utils.logger import get_logger
 
 log = get_logger("tools.project")
@@ -34,27 +38,19 @@ def _json(payload: Any) -> str:
 
 
 async def _get(path: str, **params: Any) -> Any | None:
-    """백엔드 조회(mock 이든 실백엔드든 backend.get() 창구 하나로 통일). run_id
-    부재·호출 실패면 None — 호출부가 demo_data 픽스처로 폴백한다.
+    """백엔드 조회. 창구는 backend.get() 하나다 (mock 이든 실백엔드든).
 
-    ★ 8/12 수정 — 예전엔 mock 모드(settings.uses_fixtures)면 여기서 곧장 None을
-      반환해 demo_data.py(Engine B 전용 가상 프로젝트 1001~1004)로 바로 떨어졌다.
-      backend.get() 은 mock_backend=True 여도 이미 내부에서 _mock_get() 픽스처를
-      쓰므로(app/clients/backend.py), 그걸 또 우회하면 Engine A 도구들이 보는 mock
-      데이터("다온증권 해외주식 주문 개선" 등 실제 화면에 뜨는 프로젝트)와 Engine B
-      워커가 보는 데이터가 서로 다른 회사인 것처럼 어긋난다 — 재계획 대상 프로젝트가
-      Engine B 쪽 가상 데이터엔 아예 없어서 실행 가능한 조정안을 하나도 못 만드는
-      사고로 이어졌다(2026-08-12). 그래서 mock 여부와 무관하게 run_id 만 있으면
-      항상 backend.get() 을 먼저 시도하고, 진짜 실패(run_id 없음·예외)일 때만
-      demo_data 로 폴백한다."""
+    run_id 부재·호출 실패면 None — 호출부가 '확인 못 함'으로 처리한다.
+    픽스처로 메우지 않는다: 값을 지어내느니 없다고 답하는 쪽이 낫다.
+    """
     run_id = current_run_id.get()
     if not run_id:
-        log.warning("run_id 없이 내부도구 호출: %s — 픽스처 폴백", path)
+        log.warning("run_id 없이 내부도구 호출: %s — 조회 생략", path)
         return None
     try:
         return await backend.get(path, run_id, **params)
-    except Exception as exc:  # 조회 실패로 분석을 죽이지 않는다 (폴백 원칙)
-        log.warning("backend GET %s 실패 -> 픽스처 폴백: %s", path, exc)
+    except Exception as exc:  # 조회 실패로 분석을 죽이지는 않되, 값을 지어내지도 않는다
+        log.warning("backend GET %s 실패 -> 빈 결과: %s", path, exc)
         return None
 
 
@@ -120,16 +116,16 @@ async def find_projects(user_id: int = 0, status: str = "") -> str:
     """
     raw = await _get("/projects")  # project.search — 요청자 참여 프로젝트 스코프
     if raw is None:
-        projects = demo_data.list_projects(user_id=user_id or None, status=status or None)
-    else:
-        projects = [
-            {"id": p.get("projectId"), "name": p.get("name"), "status": p.get("status"),
-             "start_date": p.get("startDate"), "due_date": p.get("targetDate")}
-            for p in raw.get("projects", [])
-        ]
-        if status:
-            projects = [p for p in projects if p.get("status") == status]
-        # 타인(user_id) 필터는 내부도구 명세 없음 — 요청자 스코프 결과를 그대로 쓴다
+        return _json({"error": "프로젝트 목록을 조회하지 못했습니다.", "count": 0, "projects": []})
+
+    projects = [
+        {"id": p.get("projectId"), "name": p.get("name"), "status": p.get("status"),
+         "start_date": p.get("startDate"), "due_date": p.get("targetDate")}
+        for p in raw.get("projects", [])
+    ]
+    if status:
+        projects = [p for p in projects if p.get("status") == status]
+    # 타인(user_id) 필터는 내부도구 명세 없음 — 요청자 스코프 결과를 그대로 쓴다
     return _json({"count": len(projects), "projects": projects})
 
 
@@ -138,8 +134,8 @@ async def find_projects(user_id: int = 0, status: str = "") -> str:
 async def _members(project_id: int) -> list[dict]:
     raw = await _get(f"/projects/{project_id}/members")
     if raw is None:
-        return demo_data.list_project_members(project_id)
-    # 키는 픽스처와 같은 id 로 맞춘다 — Context Builder 가 m["id"] 로 읽는다
+        return []
+    # 키를 id 로 맞춘다 — Context Builder 가 m["id"] 로 읽는다
     return [
         {"id": m.get("userId"), "name": m.get("name"), "role": m.get("role"),
          "department": m.get("department"), "position": m.get("position")}
@@ -152,9 +148,7 @@ async def _todos(
 ) -> list[dict]:
     raw = await _get("/tasks", projectId=project_id)
     if raw is None:
-        return demo_data.list_todos(
-            project_id=project_id, status=status, assignee_id=assignee_id
-        )
+        return []
     tasks = [_task(t) for t in raw.get("tasks", [])]
     if status:  # 내부도구는 상태 필터가 없어 클라이언트에서 거른다
         tasks = [t for t in tasks if t.get("status") == status]
@@ -208,7 +202,7 @@ async def _meetings(project_id: int, detail_limit: int = 2) -> list[dict]:
 async def fetch_project(project_id: int | None, project_name: str | None = None) -> dict | None:
     raw = await _get("/projects")  # project.detail 은 ⛔ v1 제외 — 목록에서 집는다
     if raw is None:
-        return demo_data.get_project(project_id=project_id, name=project_name)
+        return None
     for p in raw.get("projects", []):
         if (project_id and p.get("projectId") == project_id) or \
            (project_name and project_name in (p.get("name") or "")):
