@@ -196,6 +196,22 @@ Context Builder 뒤에서 **코드가** 판정한다. 근거가 없는 축은 �
 보고한다"며 근거가 틀린 축까지 답변에 실었다 — 존재하지 않는 할 일을 인용한 위험 분석이
 그대로 사용자에게 나갔다. 이제 그 축은 `context.skipped` 로 옮겨 "확인하지 못함"이 된다.
 
+### 픽스처 격리 — 폴백 경로를 없앴다
+
+`demo_data.py` 를 `app/tests/fixtures/` 로 옮기고, 프로덕션 코드에서 픽스처 참조를
+전부 제거했다. `budget_tool` · `project_query` 에 남아 있던 조용한 폴백도 같이 없앴다.
+`list_pending_approvals` 는 대응 API 가 없어 툴 자체를 삭제했다.
+
+조회 실패는 이제 **빈 결과**다. 값을 지어내지 않고, 호출부가 `missing` 에 남긴다.
+
+백엔드 없이 돌려야 할 때는 픽스처를 분기로 넣는 게 아니라 **내부도구 자리에 끼운다**
+(`app/tests/fixtures/stub.py`). 테스트(conftest)와 수동 실행기(`engine_b/demo.py`)가
+같이 쓴다. 스텁도 `project.search` 를 요청자 스코프로 제한한다 — 전체를 주면
+실제보다 넓은 결과로 테스트가 통과해버린다.
+
+`test_프로덕션_코드는_픽스처를_임포트하지_않는다` 가 `app/{tools,engine_b,workers,api,
+orchestrator,common}` 을 훑어 재발을 막는다.
+
 ### `UNKNOWN_SUBJECT` 오탐 수정
 
 한 위험이 여러 할 일에 걸리는 게 정상이라 모델은 `subject` 한 칸에
@@ -253,7 +269,6 @@ Context Builder 뒤에서 **코드가** 판정한다. 근거가 없는 축은 �
 | | 내용 |
 |---|---|
 | **게시글 컨텍스트** | `/projects/{id}/posts` 미반영 |
-| **픽스처 격리** | `demo_data` 를 `app/tests/fixtures/` 로 이동 + `app/tools/` import 금지 테스트 |
 | **`AnalysisContext.workloads` 개명** | `availabilities` 로. 내부 필드명이라 기능에는 영향 없어 후순위 |
 | **`Domain.me` 하위 호환 확인** | `request.py`·`response.py` 가 공유하는 어휘라 담당자 1·3 쪽 처리 확인 필요 |
 

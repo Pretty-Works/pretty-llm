@@ -24,7 +24,7 @@ from app.schemas.state import (
     WorkerOutput,
     merge_worker_outputs,
 )
-from app.tools import demo_data
+from app.tests.fixtures import demo_data
 from app.workers import registry
 
 AS_OF = date(2026, 7, 27)
@@ -193,7 +193,7 @@ def test_라우터_프롬프트에_픽스처_값이_없다():
     이름을 다른 이름으로 바꾸는 건 방어가 아니다 — 이 테스트가 방어다.
     """
     from app.prompts import analysis_router
-    from app.tools import demo_data
+    from app.tests.fixtures import demo_data
 
     text = analysis_router.SYSTEM + analysis_router.build_few_shot_text()
     leaked = [u["name"] for u in demo_data.USERS if u["name"] in text]
@@ -208,6 +208,32 @@ def test_라우터_프롬프트가_예시값_사용을_금지한다():
 
     assert "자리표시자" in analysis_router.SYSTEM
     assert "entities 를 **비워 둔다**" in analysis_router.SYSTEM
+
+
+def test_프로덕션_코드는_픽스처를_임포트하지_않는다():
+    """★ 사고의 근본 원인 — 프로덕션 조회 경로가 픽스처로 폴백했다.
+
+    이제 픽스처는 app/tests/fixtures/ 에만 있고, 툴·엔진·워커는 그걸 모른다.
+    조회 실패는 빈 결과이고 호출부가 '확인 못 함'으로 처리한다.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    scanned = [
+        path
+        for folder in ("tools", "engine_b", "workers", "api", "orchestrator", "common")
+        for path in (root / folder).rglob("*.py")
+        # demo.py 는 수동 실행기라 픽스처 스텁을 의도적으로 쓴다 (main() 안에서 지연 임포트)
+        if path.name != "demo.py"
+    ]
+    assert scanned, "스캔 대상을 못 찾음"
+
+    offenders = [
+        str(path.relative_to(root))
+        for path in scanned
+        if "demo_data" in path.read_text(encoding="utf-8")
+    ]
+    assert not offenders, f"프로덕션 코드가 픽스처를 참조한다: {offenders}"
 
 
 def test_데이터게이트가_근거없는_축을_건너뛴다():

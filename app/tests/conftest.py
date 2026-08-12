@@ -63,44 +63,21 @@ def request_p001() -> AnalysisRequest:
     )
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def fixture_backed_hr(monkeypatch):
-    """휴가·일정 내부도구 자리에 픽스처를 끼운다.
+    """내부도구 자리에 픽스처를 끼운다.
 
-    hr_tool 은 이제 실API 만 부른다 (2026-08-11 재설계 — 픽스처 폴백 제거).
+    툴 계층은 이제 실API 만 부른다 (2026-08-11 재설계 — 픽스처 폴백 제거).
     테스트는 그 API 자리에 demo_data 를 끼워 '백엔드가 답한 상태'를 만든다.
     프로덕션 코드에 픽스처 분기를 남기지 않으면서 같은 시나리오를 재현하는 방법이다.
+
+    autouse 인 이유: 예전에는 폴백이 사실상 전역이라 모든 테스트가 픽스처를 봤다.
+    실백엔드 분기를 검증하는 테스트(test_backend_mapping)는 자기가 `_get` 을 다시
+    덮으므로 그쪽이 이긴다.
     """
-    from app.tools import demo_data, hr_tool
+    from app.tests.fixtures import stub
 
-    names = {u["id"]: u["name"] for u in demo_data.USERS}
-
-    async def leaves(user_ids, date_from, date_to):
-        return [
-            leave
-            for uid in user_ids
-            for leave in demo_data.list_leaves(
-                user_id=uid, date_from=date_from, date_to=date_to, status="APPROVED"
-            )
-        ]
-
-    async def schedules(user_ids, date_from, date_to):
-        targets = set(user_ids)
-        return [
-            {
-                "id": s["id"],
-                "title": s["title"],
-                "start_at": f"{s['date']}T{s['start_time']}:00",
-                "end_at": f"{s['date']}T{s['end_time']}:00",
-                "all_day": False,
-                "participant_names": [names.get(p, "") for p in s["participants"]],
-            }
-            for s in demo_data.list_schedules(date_from=date_from, date_to=date_to)
-            if targets & set(s["participants"])
-        ]
-
-    monkeypatch.setattr(hr_tool, "fetch_leaves", leaves)
-    monkeypatch.setattr(hr_tool, "fetch_schedules", schedules)
+    stub.install(monkeypatch.setattr)
 
 
 @pytest.fixture

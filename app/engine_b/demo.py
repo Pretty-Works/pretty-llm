@@ -5,12 +5,16 @@
     uv run python -m app.engine_b.demo "예산이 빠듯한데 뭐부터 해야 할까?" p002
 
 라우팅 → 워커 병렬 → 검증 → 통합까지 한 번에 돌리고, 각 단계가 무엇을 했는지 출력한다.
-백엔드가 안 떠 있어도 픽스처(app/tools/demo_data.py)로 끝까지 돈다.
+
+백엔드가 안 떠 있으면 픽스처 스텁을 내부도구 **자리에** 끼워 돌린다
+(app/tests/fixtures/stub.py). 프로덕션 코드에는 픽스처 분기가 없으므로,
+여기서 명시적으로 끼우지 않으면 컨텍스트가 빈 채로 돈다 — 그게 실제 동작이다.
 """
 
 import asyncio
 import sys
 
+from app.config import get_settings
 from app.engine_b.graph import run_analysis
 from app.schemas.state import AnalysisRequest, UIContext
 
@@ -21,6 +25,14 @@ _DEFAULT_PROJECT = 1001
 def main() -> None:
     query = sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_QUERY
     project_id = sys.argv[2] if len(sys.argv) > 2 else _DEFAULT_PROJECT
+
+    # 픽스처 모드면 스텁을 끼운다. 지연 임포트인 이유: 이 모듈이 app/tests 를 항상
+    # 끌고 들어가면 프로덕션 임포트 그래프에 테스트 코드가 섞인다.
+    if get_settings().uses_fixtures:
+        from app.tests.fixtures import stub
+
+        print("[demo] 픽스처 모드 — 내부도구 자리에 스텁을 끼운다\n")
+        stub.install(setattr)
 
     state = asyncio.run(
         run_analysis(
