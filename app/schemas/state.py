@@ -126,12 +126,17 @@ class AnalysisPlan(BaseModel):
 # ─── Context Builder 출력 ─────────────────────────────────────────
 
 class MemberSnapshot(BaseModel):
+    """프로젝트 참여자. 내부도구가 주는 필드만 담는다.
+
+    입사일(hire_date)은 넣지 않는다 — BE 응답에 없고(AgentMemberListResponse 는
+    department·position 뿐), 근속 기반 역량 추정 자체를 하지 않기로 했다.
+    """
+
     user_id: int
     name: str
     department: str | None = None
     position: str | None = None
     role: str | None = None  # 프로젝트 내 역할 (PM / BE / FE / QA ...)
-    hire_date: date | None = None
     status: str | None = None
 
 
@@ -149,6 +154,29 @@ class TodoSnapshot(BaseModel):
         return self.status in {"TODO", "IN_PROGRESS"}
 
 
+class MilestoneSnapshot(BaseModel):
+    """마일스톤 1건. 일정 판단의 1차 근거다 — 할 일과 달리 기간 제약 없이 전체를 받는다."""
+
+    id: int
+    goal: str = ""
+    target_date: date | None = None
+    completed: bool = False
+    is_overdue: bool = False
+    is_next: bool = False
+
+
+class MeetingSnapshot(BaseModel):
+    """회의록 1건. content·follow_up 은 최근 몇 건만 채운다(토큰 절약)."""
+
+    id: int
+    title: str = ""
+    meeting_date: date | None = None
+    purpose: str | None = None
+    content: str | None = None
+    follow_up: str | None = None
+    attendee_names: list[str] = Field(default_factory=list)
+
+
 class ProjectSnapshot(BaseModel):
     id: int
     name: str
@@ -157,6 +185,24 @@ class ProjectSnapshot(BaseModel):
     due_date: date | None = None
     members: list[MemberSnapshot] = Field(default_factory=list)
     todos: list[TodoSnapshot] = Field(default_factory=list)
+    milestones: list[MilestoneSnapshot] = Field(default_factory=list)
+    meetings: list[MeetingSnapshot] = Field(default_factory=list)
+
+    @property
+    def milestone_progress(self) -> float | None:
+        """완료 마일스톤 비율. 마일스톤이 없으면 None — 할 일 비율로 대신하지 않는다."""
+        if not self.milestones:
+            return None
+        done = sum(1 for m in self.milestones if m.completed)
+        return round(done / len(self.milestones), 3)
+
+    @property
+    def overdue_milestones(self) -> list[MilestoneSnapshot]:
+        return [m for m in self.milestones if m.is_overdue and not m.completed]
+
+    @property
+    def next_milestone(self) -> MilestoneSnapshot | None:
+        return next((m for m in self.milestones if m.is_next), None)
 
     @property
     def open_todos(self) -> list[TodoSnapshot]:
@@ -212,7 +258,11 @@ class AnalysisContext(BaseModel):
     projects: list[ProjectSnapshot] = Field(default_factory=list)
     budgets: list[BudgetSnapshot] = Field(default_factory=list)
     leaves: list[LeaveSnapshot] = Field(default_factory=list)
+    # 후보군은 프로젝트 참여자 + 질문에 이름이 나온 사람뿐이다. 전사 명부는 받지 않는다
+    # (BE 가 /users 에 keyword 를 필수로 걸어 막아둔 경로다).
     candidates: list[MemberSnapshot] = Field(default_factory=list)
+    # Data Gate 가 근거 부족으로 건너뛴 축. 그대로 답변의 "확인 못한 것"이 된다.
+    skipped: list[str] = Field(default_factory=list)
     # app.tools.hr_tool.compute_workload() 결과. 셀 수 있는 부하 지표는
     # LLM 이 아니라 코드가 계산해서 넣는다. (hcm 도메인일 때만 채워진다)
     workloads: list[dict[str, Any]] = Field(default_factory=list)
@@ -245,6 +295,9 @@ class AnalysisContext(BaseModel):
 
     def known_todo_ids(self) -> set[str]:
         return {str(t.id) for p in self.projects for t in p.todos}
+
+    def known_milestone_ids(self) -> set[str]:
+        return {str(m.id) for p in self.projects for m in p.milestones}
 
 
 # ─── 재계획(조정안) - 담당자 3 이 채워 넣는 부분 ──────────────────

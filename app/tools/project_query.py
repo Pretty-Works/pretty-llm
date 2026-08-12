@@ -163,6 +163,48 @@ async def _todos(
     return tasks
 
 
+async def _milestones(project_id: int) -> list[dict]:
+    """마일스톤 전체. 기간 제약 없이 다 받을 수 있는 유일한 일정 근거라 1차 자료로 쓴다.
+
+    픽스처가 없다 — 못 받으면 빈 목록이고, 호출부가 '일정 근거 없음'으로 처리한다.
+    """
+    raw = await _get(f"/projects/{project_id}/milestones")
+    if raw is None:
+        return []
+    return [
+        {"id": m.get("milestoneId"), "goal": m.get("goal") or "",
+         "target_date": m.get("targetDate"), "completed": bool(m.get("completed")),
+         "is_overdue": bool(m.get("isOverdue")), "is_next": bool(m.get("isNext"))}
+        for m in raw.get("milestones", [])
+    ]
+
+
+async def _meetings(project_id: int, detail_limit: int = 2) -> list[dict]:
+    """최근 회의록. 목록을 받고 최신 몇 건만 상세를 더 받아 내용·후속조치를 채운다.
+
+    detail_limit 을 두는 이유: 상세는 회의 1건당 호출 1회라 전부 받으면 도구 한도를 태운다.
+    """
+    raw = await _get(f"/projects/{project_id}/meetings", size=5)
+    if raw is None:
+        return []
+
+    meetings = [
+        {"id": m.get("meetingId"), "title": m.get("title") or "",
+         "meeting_date": m.get("meetingDate"), "purpose": m.get("purpose"),
+         "attendee_names": m.get("attendeeNames") or [],
+         "content": None, "follow_up": None}
+        for m in raw.get("meetings", [])
+    ]
+    meetings.sort(key=lambda m: str(m.get("meeting_date") or ""), reverse=True)
+
+    for meeting in meetings[:detail_limit]:
+        detail = await _get(f"/projects/{project_id}/meetings/{meeting['id']}")
+        if detail:
+            meeting["content"] = detail.get("content")
+            meeting["follow_up"] = detail.get("followUp")
+    return meetings
+
+
 async def fetch_project(project_id: int | None, project_name: str | None = None) -> dict | None:
     raw = await _get("/projects")  # project.detail 은 ⛔ v1 제외 — 목록에서 집는다
     if raw is None:

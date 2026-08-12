@@ -22,6 +22,7 @@ from langgraph.types import Send
 
 from app.config import get_settings
 from app.engine_b.analysis_router import route
+from app.engine_b import context_builder
 from app.engine_b.context_builder import build_context
 from app.engine_b.synthesis import synthesize
 from app.engine_b.validator import validate, validate_synthesis
@@ -156,14 +157,25 @@ async def _synthesis_node(state: EngineBState) -> dict[str, Any]:
 # ─── 라우팅 (fan-out) ─────────────────────────────────────────────
 
 def _dispatch_workers(state: EngineBState) -> list[Send] | str:
-    """선택된 도메인의 워커를 전부 병렬로 띄운다."""
+    """선택된 도메인의 워커를 병렬로 띄운다. 단, 근거가 없는 축은 건너뛴다."""
     plan: AnalysisPlan = state["plan"]
     context: AnalysisContext = state["context"]
     scenario = state.get("scenario") or ScenarioSpec()
 
     specs = registry.specs_for_domains(plan.domains)
+
+    # Data Gate 가 근거 부족으로 표시한 축은 돌리지 않는다. 예전에는 컨텍스트가 비어도
+    # 워커를 띄웠고, 워커가 근거를 찾아 헤매다 없는 사실을 만들어냈다.
+    skipped = context_builder.skipped_dimensions(context)
+    if skipped:
+        specs = [s for s in specs if s.dimension not in skipped]
+        log.info("근거 부족으로 건너뛴 축: %s", sorted(skipped))
+
     if not specs:
-        log.warning("실행할 워커가 없다 (domains=%s). 통합 단계로 넘어간다.", plan.domains)
+        log.warning(
+            "실행할 워커가 없다 (domains=%s, 스킵=%s). 통합 단계로 넘어간다.",
+            plan.domains, sorted(skipped),
+        )
         return "synthesis"
 
     log.info("워커 %d개 병렬 실행: %s", len(specs), [s.dimension for s in specs])

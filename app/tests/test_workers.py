@@ -16,6 +16,7 @@ from app.engine_b.validator import (
     validate_synthesis,
 )
 from app.schemas.state import (
+    AnalysisContext,
     AnalysisPlan,
     Entities,
     ProposedChange,
@@ -94,14 +95,18 @@ def test_분석기간은_목표일까지_잡힌다(context_p001):
     assert context_p001.window_to == date(2026, 9, 30)
 
 
-def test_hcm_도메인이면_부하지표를_코드로_계산해_넣는다(context_p001):
-    """LLM 이 세지 않게 미리 세어둔다."""
+def test_hcm_도메인이면_가용성지표를_코드로_계산해_넣는다(context_p001):
+    """LLM 이 세지 않게 미리 세어둔다.
+
+    ★ 집계 범위는 **컨텍스트에 실린 프로젝트 할 일**뿐이다 (2026-08-11 재설계).
+      프로젝트 밖 할 일은 요청자가 화면에서 볼 수 없는 정보라 조회하지 않는다.
+    """
     by_user = {w["user_id"]: w for w in context_p001.workloads}
 
     assert set(by_user) == {1, 2, 3, 5, 7}
 
     minju = by_user[2]
-    assert minju["open_todo_count"] == 4  # t101, t106, t107, t203
+    assert minju["open_todo_count"] == 3  # t101, t106, t107 — t203(p002)은 범위 밖
     assert minju["overdue_count"] == 1  # t101 (마감 7/20)
     assert minju["approved_leave_days"] == 5  # 8/3~8/7
     assert minju["available_days"] == minju["working_days"] - 5
@@ -115,6 +120,40 @@ async def test_hcm이_없으면_인력데이터를_긁지_않는다(request_p001
     assert context.workloads == []
     assert context.candidates == []
     assert context.projects  # 프로젝트는 그대로 있다
+
+
+async def test_후보군은_프로젝트_참여자를_넘지_않는다(project_plan, request_p001, fixture_backed_hr):
+    """★ 회귀 테스트 — 배포에서 존재하지 않는 직원이 분석에 섞인 사고의 방어선.
+
+    예전에는 후보가 비거나 skill_fit 이 focus 에 있으면 전사 명부를 통째로 긁었다
+    (`list_department_members` 무필터 호출). 그 경로로 프로젝트와 무관한 사람이
+    후보군에 들어왔다. 이제 후보군은 프로젝트 참여자 + 질문에 이름이 나온 사람뿐이다.
+    """
+    project_plan.focus = ["skill_fit"]          # 예전에 전사 조회를 촉발하던 조건
+    context = await build_context(project_plan, request_p001)
+
+    member_ids = {m.user_id for p in context.projects for m in p.members}
+    assert {c.user_id for c in context.candidates} <= member_ids
+    assert len(context.candidates) == 5         # p001 참여자 그대로. 8명 전원이 아니다
+
+
+async def test_참여자_밖_id는_조회하지_않고_기록만_남긴다(project_plan, request_p001, fixture_backed_hr):
+    """id 로 남의 프로필을 여는 경로 자체를 없앴다."""
+    project_plan.entities.user_ids = [999]
+    context = await build_context(project_plan, request_p001)
+
+    assert all(c.user_id != 999 for c in context.candidates)
+    assert any("999" in item for item in context.missing)
+
+
+def test_데이터게이트가_근거없는_축을_건너뛴다():
+    """근거가 없으면 워커를 돌리지 않는다 — 예전에는 '도구로 직접 찾아라'고 넘겼다."""
+    from app.engine_b.context_builder import apply_data_gate, skipped_dimensions
+
+    context = AnalysisContext(as_of=AS_OF)      # 프로젝트·예산·후보 전부 없음
+    apply_data_gate(context)
+
+    assert skipped_dimensions(context) == {"priority", "risk", "cost", "skill_fit", "workload"}
 
 
 async def test_대상이_없으면_참여중인_프로젝트로_떨어진다(request_p001):
@@ -343,18 +382,19 @@ def test_정상적인_비용분석은_통과한다(context_p001):
 # ─── Validator - skill_fit ────────────────────────────────────────
 
 def _assignment(user_id: str, **overrides) -> dict:
+    """skill_fit 결과 1건. 점수·순위 필드는 없다 (2026-08-11 재설계)."""
     base = {
         "target": "todo:103",
         "target_kind": "task",
         "work_type": "FE",
-        "recommended": {
-            "user_id": user_id,
-            "name": "테스트",
-            "fit_score": 70,
-            "basis": "p000 에서 FE 역할 수행",
-        },
-        "alternatives": [
-            {"user_id": 3, "name": "박지원", "fit_score": 60, "basis": "현재 p001 FE"}
+        "matches": [
+            {
+                "user_id": user_id,
+                "name": "테스트",
+                "role": "FE",
+                "basis": "이 프로젝트 FE 역할. 결재선 화면 개편을 처리했다",
+                "note": "",
+            }
         ],
     }
     return {**base, **overrides}
@@ -376,8 +416,8 @@ def test_적합도_확신도_상한을_넘으면_잡는다(context_p001):
     ).fix_hint
 
 
-def test_휴가중인_사람을_1순위로_추천하면_잡는다(context_p001):
-    """u002 는 8/3~8/7 승인 휴가가 있다."""
+def test_부재를_밝히지_않으면_잡는다(context_p001):
+    """u002 는 8/3~8/7 승인 휴가가 있다. 배제 사유가 아니라 밝혀야 할 사실이다."""
     output = _output(
         "skill_fit",
         {"assignments": [_assignment(2)]},
@@ -387,21 +427,34 @@ def test_휴가중인_사람을_1순위로_추천하면_잡는다(context_p001):
     report = validate([output], context_p001)
 
     assert "MEMBER_UNAVAILABLE" in _codes(report)
+    # 순위가 없는 구조라 배제가 아니라 경고다
+    assert all(v.severity == "warning" for v in report.violations if v.code == "MEMBER_UNAVAILABLE")
 
 
-def test_대안후보가_없으면_잡는다(context_p001):
+def test_부재를_note에_적으면_통과한다(context_p001):
+    assignment = _assignment(2)
+    assignment["matches"][0]["note"] = "2026-08-03~2026-08-07 승인 휴가로 부재"
     output = _output(
-        "skill_fit",
-        {"assignments": [_assignment(3, alternatives=[])]},
-        domain="hcm",
-        confidence=0.7,
+        "skill_fit", {"assignments": [assignment]}, domain="hcm", confidence=0.7
     )
     report = validate([output], context_p001)
 
-    assert "NO_ALTERNATIVE" in _codes(report)
+    assert "MEMBER_UNAVAILABLE" not in _codes(report)
 
 
-def test_없는_구성원을_추천하면_잡는다(context_p001):
+def test_근거가_비면_잡는다(context_p001):
+    assignment = _assignment(3)
+    assignment["matches"][0]["basis"] = ""
+    output = _output(
+        "skill_fit", {"assignments": [assignment]}, domain="hcm", confidence=0.7
+    )
+    report = validate([output], context_p001)
+
+    assert "NO_BASIS" in _codes(report)
+
+
+def test_후보군_밖의_사람을_제시하면_잡는다(context_p001):
+    """후보군 표가 전부다. 전사 명부를 긁던 경로를 없앤 뒤의 마지막 방어선."""
     output = _output(
         "skill_fit",
         {"assignments": [_assignment(999)]},
@@ -413,10 +466,10 @@ def test_없는_구성원을_추천하면_잡는다(context_p001):
     assert "UNKNOWN_USER" in _codes(report)
 
 
-def test_정상적인_적합도_분석은_통과한다(context_p001):
+def test_정상적인_역할_매칭은_통과한다(context_p001):
     output = _output(
         "skill_fit",
-        {"assignments": [_assignment(3)], "inference_basis": "부서/과거 role 기반"},
+        {"assignments": [_assignment(3)]},
         domain="hcm",
         confidence=0.7,
     )

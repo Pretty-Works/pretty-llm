@@ -8,7 +8,7 @@
 LLM 에게는 '그래서 이게 문제인가'만 묻는다.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Iterable
 
 from app.config import get_settings
@@ -18,7 +18,9 @@ from app.schemas.state import (
     AnalysisRequest,
     BudgetSnapshot,
     LeaveSnapshot,
+    MeetingSnapshot,
     MemberSnapshot,
+    MilestoneSnapshot,
     ProjectSnapshot,
     ScenarioSpec,
     TodoSnapshot,
@@ -39,7 +41,10 @@ async def build_context(plan: AnalysisPlan, request: AnalysisRequest) -> Analysi
     as_of = request.as_of or settings.as_of()
 
     context = AnalysisContext(as_of=as_of)
-    context.requester = _member_from_user(await hr_tool.fetch_user(user_id=request.user_id))
+    # 요청자는 user.me 로만 잡는다. id 로 남의 프로필을 여는 경로를 두지 않기 위해서다.
+    context.requester = _member_from_user(await hr_tool.fetch_requester())
+    if context.requester is None:
+        context.missing.append("요청자 정보 조회 실패")
 
     project_ids = await _resolve_project_ids(plan, request)
     if not project_ids:
@@ -65,20 +70,53 @@ async def build_context(plan: AnalysisPlan, request: AnalysisRequest) -> Analysi
     if "hcm" in plan.domains or "vacation" in plan.domains:
         await _load_people(plan, context, window_from, window_to)
 
-    if not context.projects and not context.candidates:
-        context.notes.append(
-            "컨텍스트가 비어 있다. 워커는 도구로 직접 대상을 찾아야 한다."
-        )
+    apply_data_gate(context)
 
     log.info(
-        "context: 프로젝트 %d건, 후보 %d명, 기간 %s~%s, 미확보 %d건",
+        "context: 프로젝트 %d건, 후보 %d명, 마일스톤 %d건, 회의록 %d건, "
+        "기간 %s~%s, 미확보 %d건, 스킵 %s",
         len(context.projects),
         len(context.candidates),
+        sum(len(p.milestones) for p in context.projects),
+        sum(len(p.meetings) for p in context.projects),
         window_from,
         window_to,
         len(context.missing),
+        context.skipped or "없음",
     )
     return context
+
+
+# ─── Data Gate — 근거 없는 축은 돌리지 않는다 ─────────────────────
+#
+# 예전에는 컨텍스트가 비면 "워커가 도구로 직접 찾아라"고 넘겼고, 그 경로가
+# 전사 명부 조회로 이어져 존재하지 않는 사람이 분석에 섞였다. 근거가 없으면
+# 워커를 돌리지 않고 못 봤다고 답하는 쪽이 맞다.
+
+_DIMENSION_NEEDS: dict[str, tuple[str, str]] = {
+    "priority": ("projects", "대상 프로젝트"),
+    "risk": ("projects", "대상 프로젝트"),
+    "cost": ("budgets", "예산 정보"),
+    "skill_fit": ("candidates", "프로젝트 참여자"),
+    "workload": ("candidates", "프로젝트 참여자"),
+}
+
+
+def apply_data_gate(context: AnalysisContext) -> None:
+    """근거가 없는 축을 `skipped` 에 기록한다. graph 가 이 목록을 보고 워커를 건너뛴다."""
+    for dimension, (field, label) in _DIMENSION_NEEDS.items():
+        if not getattr(context, field, None):
+            context.skipped.append(f"{dimension}: {label}를 확보하지 못해 분석하지 않음")
+
+    if context.projects and not any(p.milestones for p in context.projects):
+        context.missing.append(
+            "마일스톤 없음 — 일정 판단 근거가 할 일뿐이다. 진척률을 단정하지 말 것"
+        )
+
+
+def skipped_dimensions(context: AnalysisContext) -> set[str]:
+    """`skipped` 문자열에서 축 이름만 뽑는다."""
+    return {item.split(":", 1)[0].strip() for item in context.skipped}
 
 
 # ─── 대상 해석 ────────────────────────────────────────────────────
@@ -140,7 +178,6 @@ async def _load_project(project_id: int) -> ProjectSnapshot | None:
             department=m.get("department"),
             position=m.get("position"),
             role=m.get("role"),
-            hire_date=parse_date(m.get("hire_date")),
             status=m.get("status"),
         )
         for m in await project_query._members(project_id)
@@ -159,6 +196,33 @@ async def _load_project(project_id: int) -> ProjectSnapshot | None:
         for t in await project_query._todos(project_id)
     ]
 
+    # 마일스톤은 기간 제약 없이 전체를 받는 유일한 일정 근거다 (할 일은 주 단위 제약이 있다).
+    milestones = [
+        MilestoneSnapshot(
+            id=m["id"],
+            goal=m.get("goal", ""),
+            target_date=parse_date(m.get("target_date")),
+            completed=bool(m.get("completed")),
+            is_overdue=bool(m.get("is_overdue")),
+            is_next=bool(m.get("is_next")),
+        )
+        for m in await project_query._milestones(project_id)
+    ]
+
+    # 회의록은 "하기로 한 것" 대비 진행을 보는 근거다. 프로젝트 팀원이 다 보는 문서라 범위 문제도 없다.
+    meetings = [
+        MeetingSnapshot(
+            id=m["id"],
+            title=m.get("title", ""),
+            meeting_date=parse_date(m.get("meeting_date")),
+            purpose=m.get("purpose"),
+            content=m.get("content"),
+            follow_up=m.get("follow_up"),
+            attendee_names=m.get("attendee_names") or [],
+        )
+        for m in await project_query._meetings(project_id)
+    ]
+
     return ProjectSnapshot(
         id=raw["id"],
         name=raw.get("name", ""),
@@ -167,6 +231,8 @@ async def _load_project(project_id: int) -> ProjectSnapshot | None:
         due_date=parse_date(raw.get("due_date")),
         members=members,
         todos=todos,
+        milestones=milestones,
+        meetings=meetings,
     )
 
 
@@ -186,7 +252,13 @@ async def _load_budget(project_id: int) -> BudgetSnapshot | None:
 async def _load_people(
     plan: AnalysisPlan, context: AnalysisContext, window_from: date, window_to: date
 ) -> None:
-    """인력 후보군 · 승인 휴가 · 부하 지표를 채운다."""
+    """후보군 · 승인 휴가 · 가용성 지표를 채운다.
+
+    ★ 후보군은 **프로젝트 참여자 + 질문에 이름이 나온 사람** 뿐이다.
+      예전에는 후보가 없으면 전사 명부를 긁었고(`list_department_members`), 그 경로로
+      프로젝트와 무관한 사람이 분석에 섞였다. BE 가 `/users` 에 keyword 를 필수로 걸어
+      막아둔 조회이기도 하다. 후보가 없으면 긁지 말고 Data Gate 가 축을 건너뛴다.
+    """
     candidates: dict[int, MemberSnapshot] = {}
 
     # 1) 프로젝트 참여자
@@ -194,50 +266,136 @@ async def _load_people(
         for member in project.members:
             candidates.setdefault(member.user_id, member)
 
-    # 2) 질문에 이름이 나온 사람
+    # 2) 질문에 이름이 나온 사람 (user.search — 이름 검색만 열려 있다)
     for name in plan.entities.user_names:
         user = await hr_tool.fetch_user(name=name)
         if user:
             candidates.setdefault(user["id"], _member_from_user(user))
+
+    # 3) 질문에 id 로 나온 사람은 프로젝트 참여자 안에서만 찾는다 (남의 프로필을 여는 경로 없음)
     for user_id in plan.entities.user_ids:
-        user = await hr_tool.fetch_user(user_id=user_id)
-        if user:
-            candidates.setdefault(user_id, _member_from_user(user))
-
-    # 3) 적임자 추천은 프로젝트 밖 인원도 봐야 한다
-    if "skill_fit" in plan.focus or not candidates:
-        import json
-
-        try:
-            payload = json.loads(await hr_tool.list_department_members.ainvoke({}))
-            for user in payload.get("users", []):
-                candidates.setdefault(user["id"], _member_from_user(user))
-        except Exception as exc:
-            log.warning("구성원 목록 조회 실패: %s", exc)
-            context.missing.append("전사 구성원 목록 조회 실패")
+        if user_id not in candidates:
+            context.missing.append(f"참여자 밖의 구성원(id={user_id})은 조회하지 않음")
 
     context.candidates = list(candidates.values())
+    if not context.candidates:
+        return
 
-    # 승인된 휴가 (기간 겹치는 것만)
-    for member in context.candidates:
-        for leave in await hr_tool.fetch_leaves(member.user_id, window_from, window_to):
-            context.leaves.append(
-                LeaveSnapshot(
-                    id=leave.get("id", ""),
-                    user_id=leave["user_id"],
-                    user_name=leave.get("user_name") or member.name,
-                    leave_type=leave.get("leave_type", "연차"),
-                    start_date=parse_date(leave.get("start_date")),
-                    end_date=parse_date(leave.get("end_date")),
-                    status=leave.get("status", "APPROVED"),
-                )
+    user_ids = [m.user_id for m in context.candidates]
+    if len(user_ids) > hr_tool._MAX_TARGET_USERS:
+        context.notes.append(
+            f"참여자 {len(user_ids)}명 중 앞 {hr_tool._MAX_TARGET_USERS}명만 가용성을 확인했다"
+        )
+
+    # 휴가·일정은 내부도구가 userIds 를 한 번에 받는다 — 인원별 반복 호출을 하지 않는다
+    leaves = await hr_tool.fetch_leaves(user_ids, window_from, window_to)
+    schedules = await hr_tool.fetch_schedules(user_ids, window_from, window_to)
+
+    name_by_id = {m.user_id: m.name for m in context.candidates}
+    for leave in leaves:
+        context.leaves.append(
+            LeaveSnapshot(
+                id=leave.get("id") or 0,
+                user_id=leave["user_id"],
+                user_name=leave.get("user_name") or name_by_id.get(leave["user_id"]),
+                leave_type=leave.get("leave_type", "연차"),
+                start_date=parse_date(leave.get("start_date")),
+                end_date=parse_date(leave.get("end_date")),
             )
+        )
 
-    # 부하 지표는 코드로 계산해서 넣는다 (LLM 이 세지 않게)
+    if not leaves and not schedules:
+        context.missing.append("휴가·일정 조회 결과 없음 — 부재 판단 불가")
+
+    # 셀 수 있는 것은 코드가 센다. LLM 에게는 '그래서 문제인가'만 묻는다.
     context.workloads = [
-        await hr_tool.compute_workload(member.user_id, window_from, window_to)
+        _availability(context, member, window_from, window_to, schedules)
         for member in context.candidates
     ]
+
+
+def _availability(
+    context: AnalysisContext,
+    member: MemberSnapshot,
+    window_from: date,
+    window_to: date,
+    schedules: list[dict],
+) -> dict[str, Any]:
+    """한 사람의 기간 내 가용성 지표.
+
+    할 일은 컨텍스트에 이미 실린 **프로젝트 할 일**만 센다 — 프로젝트 밖 할 일은
+    요청자가 화면에서 볼 수 없는 정보라 조회하지 않는다.
+    """
+    todos = [
+        t
+        for project in context.projects
+        for t in project.open_todos
+        if t.assignee_id == member.user_id
+    ]
+
+    overdue = [t for t in todos if t.due_date and t.due_date < context.as_of]
+    due_in_window = [
+        t for t in todos if t.due_date and window_from <= t.due_date <= window_to
+    ]
+
+    leave_days = 0
+    for leave in context.leaves:
+        if leave.user_id != member.user_id or not (leave.start_date and leave.end_date):
+            continue
+        span_start, span_end = max(leave.start_date, window_from), min(leave.end_date, window_to)
+        if span_start <= span_end:
+            leave_days += (span_end - span_start).days + 1
+
+    meeting_hours = 0.0
+    for schedule in schedules:
+        if member.name and member.name not in (schedule.get("participant_names") or []):
+            continue
+        meeting_hours += _hours_between(schedule.get("start_at"), schedule.get("end_at"))
+
+    working_days = _working_days(window_from, window_to)
+    available_days = max(0, working_days - leave_days)
+
+    return {
+        "user_id": member.user_id,
+        "name": member.name,
+        "department": member.department,
+        "position": member.position,
+        "window": {"from": window_from.isoformat(), "to": window_to.isoformat()},
+        "open_todo_count": len(todos),
+        "overdue_count": len(overdue),
+        "due_in_window_count": len(due_in_window),
+        "overdue_tasks": [{"id": t.id, "title": t.title, "due_date": t.due_date} for t in overdue],
+        "due_in_window_tasks": [
+            {"id": t.id, "title": t.title, "due_date": t.due_date} for t in due_in_window
+        ],
+        "approved_leave_days": leave_days,
+        "meeting_hours": round(meeting_hours, 1),
+        "working_days": working_days,
+        "available_days": available_days,
+        # 마감 건수 대비 실제 가용일. 사람 평가가 아니라 기간이 빠듯한지를 보는 값이다.
+        "load_index": round(len(due_in_window) / available_days, 2) if available_days else None,
+    }
+
+
+def _hours_between(start_at: Any, end_at: Any) -> float:
+    """"2026-08-06T10:00:00" 두 개의 시간 차(시간). 파싱 실패는 0."""
+    try:
+        start, end = datetime.fromisoformat(str(start_at)), datetime.fromisoformat(str(end_at))
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, (end - start).total_seconds() / 3600)
+
+
+def _working_days(start: date, end: date) -> int:
+    """주말만 제외한 근무일 수. (공휴일 테이블은 아직 없다)"""
+    if end < start:
+        return 0
+    days, current = 0, start
+    while current <= end:
+        if current.weekday() < 5:
+            days += 1
+        current = date.fromordinal(current.toordinal() + 1)
+    return days
 
 
 def _member_from_user(user: dict[str, Any] | None) -> MemberSnapshot | None:
@@ -249,7 +407,6 @@ def _member_from_user(user: dict[str, Any] | None) -> MemberSnapshot | None:
         department=user.get("department"),
         position=user.get("position"),
         role=user.get("role"),
-        hire_date=parse_date(user.get("hire_date")),
         status=user.get("status"),
     )
 
@@ -257,7 +414,10 @@ def _member_from_user(user: dict[str, Any] | None) -> MemberSnapshot | None:
 # ─── 프롬프트용 렌더링 ────────────────────────────────────────────
 
 # 워커별로 필요한 섹션만 넣어 토큰을 아낀다.
-ALL_SECTIONS = ("project", "todos", "members", "budget", "leaves", "workload", "candidates")
+ALL_SECTIONS = (
+    "project", "milestones", "todos", "members", "meetings",
+    "budget", "leaves", "workload", "candidates",
+)
 
 
 def render_context(
@@ -299,10 +459,38 @@ def render_context(
                 f"- 상태 {project.status} | 기간 {project.start_date} ~ {project.due_date}"
                 + (f" | 목표일까지 {d_day}일" if d_day is not None else "")
             )
+            # 진척률은 마일스톤이 1차 근거다. 할 일 비율은 주 단위 조회라 부분집계일 수 있다.
+            milestone_progress = project.milestone_progress
+            if milestone_progress is not None:
+                done = sum(1 for m in project.milestones if m.completed)
+                lines.append(
+                    f"- 마일스톤 진척 {milestone_progress:.1%} ({done}/{len(project.milestones)})"
+                )
             counted = [t for t in project.todos if t.status != "CANCELED"]
-            done = sum(1 for t in counted if t.status == "DONE")
-            lines.append(f"- 진행률 {project.progress:.1%} ({done}/{len(counted)})")
+            done_todos = sum(1 for t in counted if t.status == "DONE")
+            lines.append(
+                f"- 할 일 완료 {project.progress:.1%} ({done_todos}/{len(counted)})"
+                + ("" if milestone_progress is not None else " ← 마일스톤이 없어 이 값이 유일한 진척 근거다")
+            )
             lines.append(f"- 열린 할 일 {len(project.open_todos)}건")
+
+        if "milestones" in wanted and project.milestones:
+            lines += [
+                "",
+                "### 마일스톤",
+                "| id | 목표 | 목표일 | 완료 | 지연 | 다음 |",
+                "|---|---|---|---|---|---|",
+            ]
+            for milestone in sorted(
+                project.milestones,
+                key=lambda m: (m.target_date is None, m.target_date or context.as_of),
+            ):
+                lines.append(
+                    f"| {milestone.id} | {milestone.goal} | {milestone.target_date or '-'} "
+                    f"| {'O' if milestone.completed else '-'} "
+                    f"| {'지연' if milestone.is_overdue and not milestone.completed else '-'} "
+                    f"| {'다음' if milestone.is_next else '-'} |"
+                )
 
         if "members" in wanted and project.members:
             lines += ["", "### 참여자", "| user_id | 이름 | 역할 | 부서 | 직책 |", "|---|---|---|---|---|"]
@@ -329,6 +517,18 @@ def render_context(
                     f"| {d_text} | {todo.assignee_name or todo.assignee_id or '-'} |"
                 )
 
+        if "meetings" in wanted and project.meetings:
+            lines += ["", "### 최근 회의록 (하기로 한 것 대비 진행을 볼 때 쓴다)"]
+            for meeting in project.meetings:
+                lines.append(
+                    f"- [{meeting.meeting_date or '날짜 미상'}] {meeting.title}"
+                    + (f" — 목적: {meeting.purpose}" if meeting.purpose else "")
+                )
+                if meeting.content:
+                    lines.append(f"  - 내용: {meeting.content[:300]}")
+                if meeting.follow_up:
+                    lines.append(f"  - 후속 조치: {meeting.follow_up[:300]}")
+
         if "budget" in wanted:
             budget = context.budget(project.id)
             if budget:
@@ -338,6 +538,9 @@ def render_context(
                     f"- 총액 {budget.total:,} / 집행 {budget.spent:,} / 결재중 {budget.committed:,}",
                     f"- 잔액 {budget.remaining:,} (소진율 {budget.usage_ratio:.1%})",
                 ]
+                if not budget.committed:
+                    # 내부도구에 결재 조회가 없어 committed 가 늘 0이다. 잔액이 실제보다 커 보인다.
+                    lines.append("- ⚠ 결재 대기 금액 미반영 — 실제 잔액은 이보다 적을 수 있다")
 
     if "leaves" in wanted and context.leaves:
         lines += ["", "## 승인된 휴가", "| user_id | 이름 | 종류 | 기간 |", "|---|---|---|---|"]
@@ -350,7 +553,8 @@ def render_context(
     if "workload" in wanted and context.workloads:
         lines += [
             "",
-            "## 인력 부하 지표 (코드 계산값 — 그대로 인용할 것)",
+            "## 가용성 지표 (코드 계산값 — 그대로 인용할 것)",
+            "프로젝트 할 일 기준이다. 사람을 평가하는 값이 아니라 **어느 기간이 빠듯한지**를 보는 값이다.",
             "| user_id | 이름 | 열린일 | 지연 | 기간내마감 | 휴가일 | 회의h | 근무일 | 가용일 | load_index |",
             "|---|---|---|---|---|---|---|---|---|---|",
         ]
@@ -364,15 +568,27 @@ def render_context(
             )
 
     if "candidates" in wanted and context.candidates:
-        lines += ["", "## 인력 후보군", "| user_id | 이름 | 부서 | 직책 | 입사일 |", "|---|---|---|---|---|"]
+        lines += [
+            "",
+            "## 후보군 (프로젝트 참여자 + 질문에 이름이 나온 사람 뿐이다)",
+            "| user_id | 이름 | 역할 | 부서 | 직책 |",
+            "|---|---|---|---|---|",
+        ]
         for candidate in context.candidates:
             lines.append(
-                f"| {candidate.user_id} | {candidate.name} | {candidate.department or '-'} "
-                f"| {candidate.position or '-'} | {candidate.hire_date or '-'} |"
+                f"| {candidate.user_id} | {candidate.name} | {candidate.role or '-'} "
+                f"| {candidate.department or '-'} | {candidate.position or '-'} |"
             )
+        lines.append(
+            "이 표 밖의 사람은 존재 여부조차 알 수 없다. 다른 이름을 만들어내지 마라."
+        )
 
     if context.missing:
-        lines += ["", "## 확보하지 못한 정보 (필요하면 도구로 직접 조회할 것)"]
+        lines += ["", "## 확보하지 못한 정보 (없는 값을 추정으로 채우지 말 것)"]
         lines += [f"- {item}" for item in context.missing]
+
+    if context.skipped:
+        lines += ["", "## 근거 부족으로 분석하지 않는 축"]
+        lines += [f"- {item}" for item in context.skipped]
 
     return "\n".join(lines)

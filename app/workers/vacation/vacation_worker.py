@@ -27,7 +27,7 @@ from pydantic import Field
 
 from app.prompts import vacation as prompt
 from app.schemas.lenient import LenientModel
-from app.tools.hr_tool import find_user, get_user_workload, list_user_leaves
+from app.tools.hr_tool import find_user, list_member_leaves
 from app.tools.project_query import list_project_tasks
 from app.workers.base import WorkerSpec
 
@@ -73,6 +73,6 @@ SPEC = WorkerSpec(
     role=prompt.ROLE,
     method=prompt.METHOD,
     result_model=VacationImpactResult,
-    tools=(find_user, list_user_leaves, get_user_workload, list_project_tasks),
+    tools=(find_user, list_member_leaves, list_project_tasks),
     context_sections=("project", "todos", "members", "leaves", "workload"),
 )
