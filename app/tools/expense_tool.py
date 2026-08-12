@@ -29,13 +29,17 @@ async def budget_summary(projectId: int, runtime: ToolRuntime[RunContext]) -> st
     cats = " / ".join(f"{c['categoryLabel']} {c['amount']:,}원({c['share']}%)"
                       for c in r["byCategory"])
     if not r["targetBudget"]:
-        return (f"목표 예산이 설정되지 않은 프로젝트입니다 (제한 없음). "
-                f"현재까지 지출 {r['spentAmount']:,}원, {r['expenseCount']}건. 분류: {cats}")
+        result = (f"목표 예산이 설정되지 않은 프로젝트입니다 (제한 없음). "
+                  f"현재까지 지출 {r['spentAmount']:,}원, {r['expenseCount']}건. 분류: {cats}")
+        runtime.context.known_facts[f"budget_summary:{projectId}"] = result
+        return result
     warn = " ⚠️ 집행률이 기간 경과율보다 높음 — 소진 위험" \
         if r["executionRate"] > r["elapsedRate"] else ""
-    return (f"예산 {r['targetBudget']:,}원 중 {r['spentAmount']:,}원 집행 "
-            f"(집행률 {r['executionRate']}% vs 기간 경과 {r['elapsedRate']}%){warn}. "
-            f"잔액 {r['remainingAmount']:,}원. 분류: {cats}")
+    result = (f"예산 {r['targetBudget']:,}원 중 {r['spentAmount']:,}원 집행 "
+              f"(집행률 {r['executionRate']}% vs 기간 경과 {r['elapsedRate']}%){warn}. "
+              f"잔액 {r['remainingAmount']:,}원. 분류: {cats}")
+    runtime.context.known_facts[f"budget_summary:{projectId}"] = result
+    return result
 
 
 @tool
@@ -49,11 +53,15 @@ async def expense_list(projectId: int, sort: str,
     r = await backend.get(f"/projects/{projectId}/expenses",
                           run_id=runtime.context.run_id, sort=sort)
     if not r["expenses"]:
-        return "등록된 지출이 없습니다."
+        result = "등록된 지출이 없습니다."
+        runtime.context.known_facts[f"expense_list:{projectId}"] = result
+        return result
     lines = [f"- [{e['expenseId']}] {e['expenseDate']} {e['categoryLabel']} · "
              f"{e['merchant']} · {e['amount']:,}원 ({e['spenderName']})"
              for e in r["expenses"]]
-    return f"지출 {r['totalCount']}건:\n" + "\n".join(lines)
+    result = f"지출 {r['totalCount']}건:\n" + "\n".join(lines)
+    runtime.context.known_facts[f"expense_list:{projectId}"] = result
+    return result
 
 
 @tool

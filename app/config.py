@@ -52,8 +52,12 @@ class Settings(BaseSettings):
     backend_base_url: str = "http://localhost:3001"   # Spring BE
     internal_api_key: str = ""                        # 나갈 때 실어 보낸다. BE 가 요구
     # 들어오는 요청 검증용 — 나가는 키와 분리한다. 둘을 한 값으로 묶으면 BE 호출용
-    # 키를 채우는 순간 수신 검증까지 켜져 Spring→FastAPI 요청이 전부 401 이 된다
-    # (규격상 그 방향엔 인증 헤더가 없다). BE 와 합의된 뒤에만 채운다.
+    # 키를 채우는 순간 수신 검증까지 켜져 Spring→FastAPI 요청이 전부 401 이 된다.
+    # ★ 2026-08-12 — 지금은 의도적으로 비워둔 채 운영한다. Spring→FastAPI 인증
+    #   헤더 없이 이미 배포됐고, 그 방향은 docker-compose 의 127.0.0.1 바인딩
+    #   (네트워크 경계)로만 막기로 정했다 — app/common/auth.py 모듈 docstring 참고.
+    #   나중에 배포 구조가 바뀌면(Spring 이 도커 내부망으로 접근하는 등) 이 값을
+    #   채우고 BE 와 헤더 전송을 맞추면 바로 검증이 켜진다.
     inbound_api_key: str = ""
     mock_backend: bool = True                         # true면 HTTP 없이 고정값 반환
     backend_connect_timeout_s: float = 3.0

@@ -38,8 +38,10 @@ async def project_search(keyword: str, runtime: ToolRuntime[RunContext]) -> str:
         locked = "" if p.get("isOpenForContent", True) else " ⚠️쓰기 잠김(완료·보관 프로젝트)"
         lines.append(f"- [{p['projectId']}] {p['name']} · {p['status']} · "
                      f"기간 {p['startDate']}~{p['targetDate']} · 내 역할: {role}{locked}")
-    return (f"참여 중인 프로젝트 {r.get('totalCount', len(items))}건 "
-            f"(할일·회의·지출 날짜는 이 기간 안이어야 함):\n" + "\n".join(lines))
+    result = (f"참여 중인 프로젝트 {r.get('totalCount', len(items))}건 "
+              f"(할일·회의·지출 날짜는 이 기간 안이어야 함):\n" + "\n".join(lines))
+    runtime.context.known_facts[f"project_search:{keyword}"] = result
+    return result
 
 
 @tool
@@ -62,7 +64,9 @@ async def project_members(projectId: int, runtime: ToolRuntime[RunContext]) -> s
         me = " ★본인 — 회의록 참석자에 넣지 말 것" if m.get("isMe") else ""
         lines.append(f"- [{m['userId']}] {m['name']} ({m.get('department', '')} · "
                      f"{m.get('position', '')}{', ' + m['role'] if m.get('role') else ''}){me}")
-    return f"참여자 {r.get('totalCount', len(items))}명:\n" + "\n".join(lines)
+    result = f"참여자 {r.get('totalCount', len(items))}명:\n" + "\n".join(lines)
+    runtime.context.known_facts[f"project_members:{projectId}"] = result
+    return result
 
 
 READ_TOOLS = [project_search, project_members]

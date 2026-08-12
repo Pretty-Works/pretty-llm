@@ -27,14 +27,19 @@ async def schedule_list(fromDate: str, toDate: str,
     """
     r = await backend.get("/schedules", run_id=runtime.context.run_id,
                           **{"from": fromDate, "to": toDate})
+    key = f"schedule_list:{fromDate}~{toDate}"
     if not r["schedules"]:
-        return f"{fromDate}~{toDate} 에 일정이 없습니다."
+        result = f"{fromDate}~{toDate} 에 일정이 없습니다."
+        runtime.context.known_facts[key] = result
+        return result
     lines = []
     for s in r["schedules"]:
         leave = " [휴가 — schedule_update 로 수정 불가]" if s["isLeave"] else ""
         lines.append(f"- [{s['scheduleId']}] {s['title']} ({s['startAt']}~{s['endAt']}, "
                      f"{s['type']}{leave}, 참가: {', '.join(s['participantNames'])})")
-    return f"일정 {r['totalCount']}건:\n" + "\n".join(lines)
+    result = f"일정 {r['totalCount']}건:\n" + "\n".join(lines)
+    runtime.context.known_facts[key] = result   # analyze_impact 가 재사용 (기간별로 구분 보관)
+    return result
 
 
 @tool

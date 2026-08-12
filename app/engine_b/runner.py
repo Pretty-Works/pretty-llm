@@ -196,18 +196,8 @@ async def _run_baseline(goal: str, run_id: str,
         facts["tasks"] = await backend.get("/tasks", run_id=run_id, projectId=pid)
         facts["budget"] = await backend.get(f"/projects/{pid}/budget", run_id=run_id)
 
-    yield {"type": "progress", "text": "수집한 근거를 종합해 분석하고 있어요"}
-    r = await _get_llm().ainvoke([
-        {"role": "system", "content": _SYNTH_PROMPT},
-        {"role": "user", "content": f"{_format_history(history)}질문: {goal}\n\n실데이터:\n"
-                                    f"{json.dumps(facts, ensure_ascii=False, default=str)[:6000]}"},
-    ])
-    answer = (r.content if isinstance(r.content, str) else str(r.content)).strip()
+    yield _sse({"step": "done"})
 
-    from app.common.background import fire
-    from app.memory.indexer import index_analysis
-    fire(index_analysis(run_id, goal, None, answer))
-    yield {"type": "result", "answer": answer,
-           "detail": {"sources": {k: True for k in facts}, "engine": "baseline"}}
-def _sse(event_type: str, payload: dict) -> str:
-    return f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"

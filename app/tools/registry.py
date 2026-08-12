@@ -27,7 +27,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 # ─────────────────────────────────────────────────────────────
@@ -55,6 +55,12 @@ class RunContext:
     # 채팅에 첨부된 파일 [{name, content}] — BE 가 텍스트 추출해 runs 바디로 보낸다.
     attachments: list[dict] | None = None
 
+    # ★ 8/12 추가 — 이번 turn에서 읽기 도구가 이미 조회한 사실(사람이 읽는
+    #   요약 문자열)의 캐시. analyze_impact 가 엔진 B 를 부르기 직전에 이걸
+    #   질문에 그대로 이어붙인다 — LLM 이 요약하다 놓치는 걸 막기 위해서다.
+    #   LLM 은 이 필드를 못 보고, 도구만 채우고 읽는다.
+    known_facts: dict[str, str] = field(default_factory=dict)
+
 
 # ─────────────────────────────────────────────────────────────
 # ② 승인 등급 — auto 모드 정책
@@ -66,7 +72,9 @@ AUTO_ALLOWED: frozenset[str] = frozenset({
     "meeting.create",            # 삭제 가능 · 알림 없음
     "task.create",
     "task.toggleStatus",         # 토글이라 원복
+    "task.update",               # 본인 할일 내용/마감/프로젝트 수정 — 다시 고칠 수 있음
     "milestone.toggleStatus",
+    "replan.save",               # 제안 저장 — 실 데이터 변경 없음
 })
 
 AUTO_FORBIDDEN: frozenset[str] = frozenset({
@@ -78,6 +86,7 @@ AUTO_FORBIDDEN: frozenset[str] = frozenset({
                                               #   되는 시점이라 사람이 한 번 본다.
     "replan.apply",                          # 배치 반영 + 여러 구성원에게 알림
     "gmail.send",                            # 상대방에게 실제 메일이 나감 — 되돌릴 수 없음
+    "replan.apply",                          # 배치 반영 + 여러 구성원에게 알림
 })
 
 
@@ -129,6 +138,12 @@ WRITE_TOOLS: dict[str, dict] = {
         "path": "/tasks/{taskId}/status",
         "path_params": ("taskId",),
     },
+    "task_update": {
+        "catalog": "task.update",           # PUT 전체 교체 — content/projectId/dueDate 항상 셋 다 보낸다
+        "method": "PUT",
+        "path": "/tasks/{taskId}",
+        "path_params": ("taskId",),
+    },
     "schedule_create": {
         "catalog": "schedule.create",
         "method": "POST",
@@ -162,6 +177,10 @@ WRITE_TOOLS: dict[str, dict] = {
         #   다른 프로젝트로 보내도 해시가 그대로다). path.format(**args) 는 args 에 있는
         #   키만 쓰므로 projectId 가 params 에도 남아 있어도 문제없다.
         "path_params": (),
+        "catalog": "replan.save",           # 제안 저장 — 실 데이터 변경 없음(승인 불필요)
+        "method": "POST",
+        "path": "/projects/{projectId}/replans",
+        "path_params": ("projectId",),
     },
     "replan_apply": {
         "catalog": "replan.apply",          # AUTO_FORBIDDEN — 저장분에서 꺼내 반영(승인 필요)
@@ -182,6 +201,7 @@ WRITE_TOOLS: dict[str, dict] = {
 MCP_WRITE_TOOLS: dict[str, dict] = {
     "gmail_send_email": {
         "catalog": "gmail.send",   # AUTO_FORBIDDEN — 상대방에게 실제 메일이 나가는 되돌릴 수 없는 행동
+        "path_params": ("projectId", "replanId"),
     },
 }
 

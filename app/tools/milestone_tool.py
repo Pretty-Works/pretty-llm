@@ -25,15 +25,19 @@ async def milestone_list(projectId: int, runtime: ToolRuntime[RunContext]) -> st
     r = await backend.get(f"/projects/{projectId}/milestones",
                           run_id=runtime.context.run_id)
     if not r["milestones"]:
-        return "등록된 마일스톤이 없습니다."
+        result = "등록된 마일스톤이 없습니다."
+        runtime.context.known_facts[f"milestone_list:{projectId}"] = result
+        return result
     lines = []
     for m in r["milestones"]:
         mark = "✔" if m["completed"] else ("→ 다음 차례" if m["isNext"] else "□")
         late = " ⚠️지연" if m["isOverdue"] else ""
         lines.append(f"- [{m['milestoneId']}] {mark} {m['goal']} (목표 {m['targetDate']}{late})")
     s = r["summary"]
-    return (f"마일스톤 {s['total']}개 중 {s['completed']}개 완료 "
-            f"({s['completionRate']}%):\n" + "\n".join(lines))
+    result = (f"마일스톤 {s['total']}개 중 {s['completed']}개 완료 "
+              f"({s['completionRate']}%):\n" + "\n".join(lines))
+    runtime.context.known_facts[f"milestone_list:{projectId}"] = result
+    return result
 
 
 @tool
