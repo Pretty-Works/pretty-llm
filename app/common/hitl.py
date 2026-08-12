@@ -101,6 +101,23 @@ _STEP_TEXT = {
     "project_members": "참석자 정보를 확인하는 중...",
     "meeting_list": "회의록 목록을 확인하는 중...",
     "meeting_create": "회의록을 저장하는 중...",
+    # ★ 8/12 추가 — 연차 1차 판단(엔진 A) → 조건부 심층분석(엔진 B) 흐름이
+    #   승인 카드만 툭 뜨는 게 아니라 각 단계가 SSE step 으로 보이게 한다.
+    "leave_balance": "잔여 연차를 확인하는 중입니다...",
+    # ★ 8/12 수정 — schedule_list·task_list 는 연차 도메인 전용이 아니라 회의록·할일
+    #   도메인에서도 부른다(각각 회의 날짜 후보 찾기, 주간 할일 조회). 도메인별
+    #   문구를 못 나누는 구조(도구 이름 하나에 문구 하나)라, 특정 도메인 얘기처럼
+    #   안 들리게 중립적인 문구로 바꿨다.
+    "schedule_list": "관련 일정을 확인하는 중입니다...",
+    "task_list": "할일 목록을 확인하는 중입니다...",
+    "analyze_impact": "판단이 애매해 조금 더 깊이 있게 분석하고 있습니다...",
+    "leave_create": "연차 신청을 진행하는 중입니다...",
+    "task_update": "할일 내용을 수정하는 중입니다...",
+    "task_due_within": "그 기간 마감인 할일을 정리하는 중입니다...",
+    # ★ 8/12 추가 — 재계획(replan) 흐름도 내부 함수명이 그대로 노출되던 것을 정리
+    "propose_replan_scenarios": "일정·인력·범위 조정안 3가지를 분석하고 있습니다...",
+    "replan_save": "선택하신 조정안을 저장하는 중입니다...",
+    "replan_apply": "조정안을 프로젝트에 반영하는 중입니다...",
 }
 
 # approvalId·questionId 는 우리가 만들지 않는다 — BE 가 주입한다 (규격 명시:
@@ -235,12 +252,18 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
         result_sink["action"] = ctx.action
         result_sink["completed"] = True
     if emit_done:
-        yield sse.sse_event("done", {"answer": final_text, "action": ctx.action})
-        # 대화 요약 카드 갱신 — 발사 후 망각 (응답 지연 0, 실패는 로그만)
-        from app.common.background import fire
+        # ★ 8/12 변경 — 채팅 목록 제목(BE GET /agent/conversations 의 title)에
+        #   쓸 값을 done 바디에 실어야 해서, 더 이상 fire()(발사 후 망각)가 아니라
+        #   done 을 내보내기 "전에" await 한다. LLM 호출 1번만큼 지연이 늘지만,
+        #   그래야 BE 가 title 을 그대로 저장할 수 있다(자세한 이유는
+        #   app/memory/summarize.py 모듈 docstring). 실패해도 None 이라 done 자체는
+        #   막지 않는다 — 이때는 title 필드를 아예 안 실어 BE 가 첫 질문으로 폴백한다.
         from app.memory.summarize import summarize_run
-        fire(summarize_run(ctx.run_id, ctx.conversation_id,
-                           ctx.goal or "", final_text))
+        title = await summarize_run(ctx.run_id, ctx.conversation_id, ctx.goal or "", final_text)
+        done_payload = {"answer": final_text, "action": ctx.action}
+        if title:
+            done_payload["title"] = title
+        yield sse.sse_event("done", done_payload)
 
 
 async def _approval_payload(interrupts, tool_call_ids: dict[str, str], run_id: str) -> dict:

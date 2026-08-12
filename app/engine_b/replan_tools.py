@@ -101,7 +101,13 @@ async def propose_replan_scenarios(query: str, project_id: int | None = None,
                 "먼저 확인한 뒤, project_id 인자를 채워 다시 호출하세요. (재생성 "
                 "한도에는 포함되지 않습니다.)")
 
-    scenarios_result: list[SynthesisResult] = await run_scenarios(request, plan)
+    def _progress(text: str) -> None:
+        if runtime and runtime.stream_writer:
+            runtime.stream_writer({"text": text})   # → hitl._drive 가 step 으로 방출
+
+    scenarios_result: list[SynthesisResult] = await run_scenarios(
+        request, plan, on_progress=_progress)
+    _progress("세 가지 안을 비교하고 있어요")
     tradeoff: TradeoffResult = await run_tradeoff(scenarios_result)
 
     by_id = {c.scenario_type: c for c in tradeoff.comparisons}

@@ -17,6 +17,7 @@ from app.tools.meeting_tool import (meeting_create, meeting_detail,
 from app.tools.memory_tool import doc_search, recall
 from app.tools.navigate import navigate
 from app.tools.project_tool import project_members, project_search
+from app.tools.schedule_tool import schedule_list
 from app.tools.user_tool import user_me
 
 DOMAIN_PROMPT = """당신은 그룹웨어의 회의록 담당 에이전트입니다.
@@ -33,7 +34,15 @@ DOMAIN_PROMPT = """당신은 그룹웨어의 회의록 담당 에이전트입니
 - 삭제·수정 요청은 meeting_list 로 대상을 특정한 뒤 navigate(MEETING_DETAIL) 로 안내.
 - ★파일이 첨부된 회의록 작성 요청은 meeting_create 로 저장하지 말고
   meeting_draft_fill 로 작성 화면에 초안만 채워라 — 저장은 사용자가 화면에서 한다.
-  첨부 없이 말로 불러 주는 내용은 기존대로 meeting_create 로 저장한다."""
+  첨부 없이 말로 불러 주는 내용은 기존대로 meeting_create 로 저장한다.
+- ★ "회의록 작성해줘"처럼 날짜(그리고 프로젝트)를 안 짚어 주면, 어느 날짜인지
+  절대 지어내지 마라. 먼저 user_me 로 오늘을 확인하고, schedule_list 로 최근
+  1~2주 지난 일정 중 type=MEETING 인 것을 조회해 후보를 만들어라(같은 기간의
+  회의록이 meeting_list 에 이미 있으면 그건 후보에서 뺀다 — 이미 작성된 것).
+  그 조회로 찾은 실제 날짜·제목만 ask_user 의 보기로 제시한다. 후보가 하나뿐이면
+  묻지 말고 그것으로 진행하고, 아예 없으면 "최근 회의 일정을 못 찾았어요, 날짜와
+  프로젝트를 알려주시겠어요?"처럼 자유 입력으로 물어라 — 보기 없이 날짜를 지어내
+  옵션으로 보여주는 건 절대 금지."""
 
 
 _agent = None
@@ -43,8 +52,8 @@ async def get_agent():
     global _agent
     if _agent is None:
         _agent = build_domain_agent(
-            [user_me, project_search, project_members, meeting_list, meeting_detail,
-             meeting_create, meeting_draft_fill, analyze_impact,
+            [user_me, project_search, project_members, schedule_list, meeting_list,
+             meeting_detail, meeting_create, meeting_draft_fill, analyze_impact,
              recall, doc_search, ask_user, navigate],
             DOMAIN_PROMPT,
             await get_checkpointer(),

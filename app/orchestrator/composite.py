@@ -150,8 +150,12 @@ async def stream_composite(run_id: str, ctx: RunContext, plan: dict,
     plan["current"] = len(subtasks)                  # 완료 표시
     await save_plan(run_id, plan)
     final_answer = "\n".join(a for a in plan["answers"] if a)
-    yield sse.sse_event("done", {"answer": final_answer, "action": last_action})
 
-    from app.common.background import fire
+    # ★ 8/12 변경 — hitl._drive() 와 동일한 이유로 fire() 대신 await 한다.
+    #   채팅 목록 제목(BE title 필드)에 쓸 값을 done 바디에 실어야 하기 때문.
     from app.memory.summarize import summarize_run
-    fire(summarize_run(run_id, ctx.conversation_id, ctx.goal or "", final_answer))
+    title = await summarize_run(run_id, ctx.conversation_id, ctx.goal or "", final_answer)
+    done_payload = {"answer": final_answer, "action": last_action}
+    if title:
+        done_payload["title"] = title
+    yield sse.sse_event("done", done_payload)

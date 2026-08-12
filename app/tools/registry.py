@@ -27,7 +27,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 # ─────────────────────────────────────────────────────────────
@@ -72,6 +72,7 @@ AUTO_ALLOWED: frozenset[str] = frozenset({
     "meeting.create",            # 삭제 가능 · 알림 없음
     "task.create",
     "task.toggleStatus",         # 토글이라 원복
+    "task.update",               # 본인 할일 내용/마감/프로젝트 수정 — 다시 고칠 수 있음
     "milestone.toggleStatus",
     "replan.save",               # 제안 저장 — 실 데이터 변경 없음
 })
@@ -135,6 +136,12 @@ WRITE_TOOLS: dict[str, dict] = {
         "catalog": "task.toggleStatus",
         "method": "PATCH",
         "path": "/tasks/{taskId}/status",
+        "path_params": ("taskId",),
+    },
+    "task_update": {
+        "catalog": "task.update",           # PUT 전체 교체 — content/projectId/dueDate 항상 셋 다 보낸다
+        "method": "PUT",
+        "path": "/tasks/{taskId}",
         "path_params": ("taskId",),
     },
     "schedule_create": {

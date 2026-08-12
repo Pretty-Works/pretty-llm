@@ -12,8 +12,16 @@ POST /api/agent/suggestions  (BE → FastAPI, 단발 JSON — SSE·내부도구 
 
 ★ 후보 선정은 코드가 한다. LLM 은 고른 후보를 문장으로 바꾸기만 한다.
   무엇을 추천할지까지 LLM 에 맡기면 "없는 회의"를 추천하는 걸 막을 방법이 없다.
+
+★ 8/12 추가 — "@@프로젝트 마감이 임박해드릴까요?" 처럼 후보에 없는 이름을
+  LLM 이 자리표시자(placeholder)로 지어내 화면에 그대로 노출된 사고가 있었다.
+  프롬프트로 금지해도(app/prompts/suggestions.py) LLM 이 100% 지키는 보장이
+  없으므로, 여기서도 "text 안의 작은따옴표 인용구가 실제로 그 후보의 fact 에
+  있는 문자열인지"를 코드로 한 번 더 검증한다(_draft_text_is_grounded). 실패하면
+  그 항목만 코드가 만든 폴백 문구로 되돌린다 — 패널 전체를 비우지 않는다.
 """
 
+import re
 from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException
@@ -157,6 +165,16 @@ def _overlaps(text: str, asked: str) -> bool:
     return any(q and q in asked for q in quoted)
 
 
+def _draft_text_is_grounded(text: str, fact: str) -> bool:
+    """LLM 이 쓴 text 안의 작은따옴표 인용구가 실제로 이 후보의 fact 에 있는가.
+
+    "@@프로젝트"처럼 후보에 없는 이름을 자리표시자로 지어내는 사고를 막는
+    마지막 방어선 — 프롬프트만으로는 100% 못 막는다. 인용구가 하나도 없으면
+    (이름이 필요 없는 문구) 통과시킨다."""
+    quoted = re.findall(r"'([^']+)'", text)
+    return all(q in fact for q in quoted)
+
+
 # ─── 엔드포인트 ───────────────────────────────────────────────────
 
 @agent_router.post("/api/agent/suggestions", response_model=SuggestionResponse)
@@ -184,14 +202,18 @@ async def suggestions(req: SuggestionRequest) -> SuggestionResponse:
         _log_fallback(exc)
         items = []
 
-    return SuggestionResponse(suggestions=[
-        Suggestion(
-            text=(items[i].text if i < len(items) else picked[i]["text"])[:40],
-            prompt=items[i].prompt if i < len(items) else picked[i]["prompt"],
-            kind=picked[i]["kind"],
-        )
-        for i in range(len(picked))
-    ])
+    result: list[Suggestion] = []
+    for i, c in enumerate(picked):
+        # i번째 LLM 초안이 있고, 그 초안의 인용구가 실제 데이터에 근거하면 그걸 쓴다.
+        # 없거나(항목 부족) 근거 없는 이름을 지어냈으면("@@프로젝트" 등) 코드가 만든
+        # 폴백 문구로 되돌린다 — 이 항목만 바뀌고 패널 전체를 비우지 않는다.
+        if i < len(items) and _draft_text_is_grounded(items[i].text, c["fact"]):
+            text, prompt = items[i].text, items[i].prompt
+        else:
+            text, prompt = c["text"], c["prompt"]
+        result.append(Suggestion(text=text[:40], prompt=prompt, kind=c["kind"]))
+
+    return SuggestionResponse(suggestions=result)
 
 
 def _log_fallback(exc: Exception) -> None:

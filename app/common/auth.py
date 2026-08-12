@@ -30,18 +30,21 @@
   같이 켜지는데, 규격상 Spring→FastAPI 방향엔 인증 헤더가 없어서 BE 의 모든 호출이
   401 이 된다. 한쪽만 켤 수 없는 구조라 값을 둘로 나눴다.
 
-★ ①이 아직 "느슨한 모드"로 시작하는 이유
-  inbound_api_key 는 BE 팀과 발급/배포 방식을 아직 합의 전이라 비어 있다. 비어 있는
-  동안은 검증을 건너뛴다(그래야 로컬/개발 환경, 지금까지의 테스트가 안 막힌다) —
-  대신 매 요청마다 경고 로그를 남겨 "지금 이 배포는 인증이 꺼져 있다"는 사실이
-  조용히 묻히지 않게 한다.
+★ ①을 지금 "느슨한 모드"로 운영하기로 확정한 이유 (2026-08-12 결정)
+  Spring→FastAPI 인증 헤더 없이 이미 배포가 나갔고, 앞으로도 이 헤더 없이 가기로
+  정했다. 대신 네트워크 경계로 막는다 — docker-compose.yml 이 이 서버를
+  "127.0.0.1:3002:3002"로만 호스트에 노출한다(컨테이너 안은 0.0.0.0 이지만,
+  호스트 루프백 밖에서는 애초에 이 포트에 닿을 수 없다). Spring 이 이 서버와
+  같은 호스트에서 루프백으로 호출하는 구조라면, "인증 안 된 아무나 호출" 이라는
+  시나리오 자체가 네트워크 층에서 막힌다 — 그래서 애플리케이션 층 인증
+  (inbound_api_key)을 추가로 요구하지 않기로 했다.
 
-  켜기 전 BE 와 맞춰야 할 것: 아래 8개 경로 전부에 헤더를 실어야 한다.
-    /api/agent/runs · /runs/{id}/resume · /api/agent/project-summary
-    /api/agent/meeting-draft · /docs(POST)
-    /api/v1/integrations/gmail/{connect-url,status,connection}
-  특히 gmail 3개는 프론트가 부르는 흐름이라(app/api/integrations.py) BE 중계로
-  바꾸거나 인증 대상에서 빼야 한다 — 브라우저에 이 키를 둘 수는 없다.
+  ⚠️ 이 결정은 "Spring이 이 서버와 같은 호스트에서 루프백으로 접근한다"는 전제에
+  묶여 있다. 나중에 배포 구조가 바뀌어 Spring 이 별도 컨테이너에서 도커 내부
+  네트워크(호스트 루프백이 아닌 경로)로 접근하게 되면 이 전제가 깨진다 — 그때는
+  이 파일을 다시 검토해야 한다. inbound_api_key 를 채우면 verify_internal_api_key()
+  는 그대로 검증을 시작하도록 짜여 있으니, 코드를 더 고칠 필요 없이 .env 값만
+  채우고 BE 와 헤더 전송을 맞추면 된다.
 """
 
 from __future__ import annotations
@@ -54,6 +57,7 @@ from app.config import get_settings
 from app.utils.logger import get_logger
 
 log = get_logger("common.auth")
+_startup_logged = False   # 매 요청이 아니라 프로세스당 한 번만 상태를 알린다
 
 
 async def verify_internal_api_key(
@@ -66,14 +70,23 @@ async def verify_internal_api_key(
     BE가 보내는 X-Internal-Api-Key 헤더가 settings.inbound_api_key 와 정확히
     일치해야 통과한다. 실패하면 401 — 어떤 값이 왜 틀렸는지는 응답에 담지
     않는다(공격자에게 힌트를 주지 않기 위해서다).
+
+    inbound_api_key 가 비어 있으면(현재 운영 중인 기본 상태) 검증을 건너뛴다 —
+    이 경우 네트워크 경계(docker-compose 의 127.0.0.1 바인딩, 모듈 docstring
+    참고)가 유일한 방어선이라는 뜻이다. 요청마다 로그를 남기면 소음만 늘어서,
+    프로세스 시작 후 첫 요청 때 한 번만 상태를 알린다.
     """
+    global _startup_logged
     settings = get_settings()
 
     if not settings.inbound_api_key:
-        log.warning(
-            "INBOUND_API_KEY 미설정 — 인증 없이 요청을 통과시킴 "
-            "(BE 와 합의 전 임시 상태, 프로덕션 배포 전 반드시 채울 것)"
-        )
+        if not _startup_logged:
+            log.info(
+                "INBOUND_API_KEY 미설정 — 애플리케이션 인증 없이 요청을 통과시킨다. "
+                "네트워크 경계(127.0.0.1 바인딩)로만 막는 구조로 운영 중 "
+                "(app/common/auth.py 모듈 docstring 참고)"
+            )
+            _startup_logged = True
         return
 
     if not hmac.compare_digest(x_internal_api_key or "", settings.inbound_api_key):

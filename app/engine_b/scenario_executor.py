@@ -17,6 +17,7 @@ Scenario Executor — Replanning 조정안 3개 병렬 분석 (담당자3)
 from __future__ import annotations
 
 import asyncio
+from typing import Callable
 
 from app.engine_b.analysis_router import route
 from app.engine_b.context_builder import build_context
@@ -109,11 +110,18 @@ _SCENARIO_CONCURRENCY = 2
 async def run(
     request: AnalysisRequest,
     plan: AnalysisPlan | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> list[SynthesisResult]:
     """조정안 3개를 분석해 SynthesisResult 3개를 반환한다(동시 최대 _SCENARIO_CONCURRENCY개).
 
     plan 을 안 주면 replan 모드로 라우팅한다(호출부가 이미 route 했으면 그걸 넘긴다).
     context 는 1회만 만들어 3개 조정안이 공유한다.
+
+    on_progress: 조정안 분석을 "시작"할 때마다 한글 한 줄을 넘겨 받는 훅(선택).
+      ★ 8/12 추가 — propose_replan_scenarios 가 이걸로 SSE step 을 밀어 넣어,
+      3안 분석이 끝날 때까지 사용자 화면이 침묵하지 않게 한다. 동시 실행(최대
+      _SCENARIO_CONCURRENCY개)이라 메시지 순서가 spec 순서와 완전히 같진 않을
+      수 있다 — "시작"만 알려주는 용도라 문제 없다.
     """
     plan = plan or await route(request, force_mode=Mode.replan)
     context: AnalysisContext = await build_context(plan, request)
@@ -123,6 +131,8 @@ async def run(
 
     async def _bounded(spec: ScenarioSpec) -> SynthesisResult:
         async with sem:
+            if on_progress:
+                on_progress(f"'{spec.label}' 안을 분석하고 있어요")
             return await _analyze_one(plan, context, spec)
 
     results: list[SynthesisResult] = await asyncio.gather(
