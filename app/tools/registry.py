@@ -74,7 +74,6 @@ AUTO_ALLOWED: frozenset[str] = frozenset({
     "task.toggleStatus",         # 토글이라 원복
     "task.update",               # 본인 할일 내용/마감/프로젝트 수정 — 다시 고칠 수 있음
     "milestone.toggleStatus",
-    "replan.save",               # 제안 저장 — 실 데이터 변경 없음
 })
 
 AUTO_FORBIDDEN: frozenset[str] = frozenset({
@@ -86,7 +85,6 @@ AUTO_FORBIDDEN: frozenset[str] = frozenset({
                                               #   되는 시점이라 사람이 한 번 본다.
     "replan.apply",                          # 배치 반영 + 여러 구성원에게 알림
     "gmail.send",                            # 상대방에게 실제 메일이 나감 — 되돌릴 수 없음
-    "replan.apply",                          # 배치 반영 + 여러 구성원에게 알림
 })
 
 
@@ -94,8 +92,11 @@ AUTO_FORBIDDEN: frozenset[str] = frozenset({
 # ③ 쓰기 도구 명세
 #
 #    규칙 1 — 도구 인자 이름 = 내부 API 요청 바디 필드 이름.
-#      경로 파라미터만 path_params 로 빼고, 나머지가 그대로 params 가 된다.
-#      "인자 → params" 변환에 사람이 개입할 여지가 없어 해시가 어긋나지 않는다.
+#      인자 전부가 그대로 params(요청 바디)가 된다. ★ 경로변수(projectId 등)도
+#      바디에 남긴다 — 승인 토큰이 바디 해시로 봉인되므로, 경로만으로 대상을
+#      정하면 승인 때와 다른 프로젝트로 보내도 해시가 그대로 통과한다. BE 승인
+#      카드 렌더러도 바디에서 이 값들을 필수로 읽는다(없으면 AGENT_007).
+#      path.format(**args) 는 필요한 키만 쓰므로 바디에 남아 있어도 문제없다.
 #
 #    규칙 2 — 키는 LangChain 도구 이름(meeting_create), catalog 는 규격 이름(meeting.create).
 #      OpenAI 함수명에는 점(.)을 못 쓰므로 둘을 나눈다. 승인 이벤트의 tool 필드와
@@ -112,82 +113,61 @@ WRITE_TOOLS: dict[str, dict] = {
         "catalog": "meeting.create",
         "method": "POST",
         "path": "/projects/{projectId}/meetings",
-        "path_params": ("projectId",),
     },
     "leave_create": {
         "catalog": "leave.create",          # AUTO_FORBIDDEN — auto 모드에도 항상 사람 승인
         "method": "POST",
         "path": "/leaves",
-        "path_params": (),
     },
     "leave_update": {
         "catalog": "leave.update",
         "method": "PATCH",
         "path": "/leaves/{leaveId}",
-        "path_params": ("leaveId",),
     },
     "task_create": {
         "catalog": "task.create",           # 배치 — body {"tasks":[...]} 1~10건 단일 트랜잭션
         "method": "POST",
         "path": "/tasks",
-        "path_params": (),
     },
     "task_toggle_status": {
         "catalog": "task.toggleStatus",
         "method": "PATCH",
         "path": "/tasks/{taskId}/status",
-        "path_params": ("taskId",),
     },
     "task_update": {
         "catalog": "task.update",           # PUT 전체 교체 — content/projectId/dueDate 항상 셋 다 보낸다
-        "method": "PUT",
+        "method": "PUT",                    # ⚠️ BE 에 이 엔드포인트가 아직 없다 — 합의 대기
         "path": "/tasks/{taskId}",
-        "path_params": ("taskId",),
     },
     "schedule_create": {
         "catalog": "schedule.create",
         "method": "POST",
         "path": "/schedules",
-        "path_params": (),
     },
     "schedule_update": {
         "catalog": "schedule.update",
         "method": "PATCH",
         "path": "/schedules/{scheduleId}",
-        "path_params": ("scheduleId",),
     },
     "expense_create": {
         "catalog": "expense.create",
         "method": "POST",
         "path": "/projects/{projectId}/expenses",
-        "path_params": ("projectId",),
     },
     "milestone_toggle_status": {
         "catalog": "milestone.toggleStatus",
         "method": "PATCH",
         "path": "/projects/{projectId}/milestones/{milestoneId}/status",
-        "path_params": ("projectId", "milestoneId"),
     },
     "replan_save": {
         "catalog": "replan.save",           # AUTO_FORBIDDEN — 승인 필요(2026-08-09 스펙 개정)
         "method": "POST",
         "path": "/projects/{projectId}/replans",
-        # ★ path_params 를 비워둔다 — projectId 가 경로에도, 바디에도 그대로 들어가야
-        #   한다(승인 토큰이 바디 해시로 봉인되므로, 경로만으로 대상을 정하면 승인 때와
-        #   다른 프로젝트로 보내도 해시가 그대로다). path.format(**args) 는 args 에 있는
-        #   키만 쓰므로 projectId 가 params 에도 남아 있어도 문제없다.
-        "path_params": (),
-        "catalog": "replan.save",           # 제안 저장 — 실 데이터 변경 없음(승인 불필요)
-        "method": "POST",
-        "path": "/projects/{projectId}/replans",
-        "path_params": ("projectId",),
     },
     "replan_apply": {
         "catalog": "replan.apply",          # AUTO_FORBIDDEN — 저장분에서 꺼내 반영(승인 필요)
         "method": "POST",
         "path": "/projects/{projectId}/replans/{replanId}/apply",
-        # ★ 위와 동일한 이유로 projectId·replanId 둘 다 body 에도 남긴다.
-        "path_params": (),
     },
 }
 
@@ -201,7 +181,6 @@ WRITE_TOOLS: dict[str, dict] = {
 MCP_WRITE_TOOLS: dict[str, dict] = {
     "gmail_send_email": {
         "catalog": "gmail.send",   # AUTO_FORBIDDEN — 상대방에게 실제 메일이 나가는 되돌릴 수 없는 행동
-        "path_params": ("projectId", "replanId"),
     },
 }
 
@@ -216,9 +195,8 @@ def build_request(tool_name: str, args: dict) -> tuple[str, str, dict]:
     호출 전에 `is_mcp_write()`로 걸러야 한다(app/common/hitl.py 참고).
     """
     spec = WRITE_TOOLS[tool_name]
-    path = spec["path"].format(**args)
-    params = {k: v for k, v in args.items() if k not in spec["path_params"]}
-    return spec["method"], path, params
+    # 경로변수도 params(바디)에 그대로 남긴다 — 이유는 위 "규칙 1" 참고.
+    return spec["method"], spec["path"].format(**args), dict(args)
 
 
 def is_write(tool_name: str) -> bool:
