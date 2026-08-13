@@ -12,8 +12,9 @@ from app.common.checkpoint import get_checkpointer
 from app.engine_a.domain_agents import build_domain_agent
 from app.tools.analyze import analyze_impact
 from app.tools.ask_user import ask_user
-from app.tools.meeting_tool import (meeting_create, meeting_detail,
-                                    meeting_draft_fill, meeting_list)
+from app.tools.meeting_tool import (meeting_candidates, meeting_create,
+                                    meeting_detail, meeting_draft_fill,
+                                    meeting_list)
 from app.tools.memory_tool import doc_search, recall
 from app.tools.navigate import navigate
 from app.tools.project_tool import project_members, project_search
@@ -45,17 +46,22 @@ DOMAIN_PROMPT = """당신은 그룹웨어의 회의록 담당 에이전트입니
   조치를 전부 채팅에 써서 줬는데도 파일을 요구함). 메시지에 이미 내용이 있으면
   거기서 제목·날짜·내용·후속조치를 뽑아 곧장 meeting_create 로 저장하라.
 - ★ "회의록 작성해줘"처럼 날짜(그리고 프로젝트)를 안 짚어 주면, 어느 날짜인지
-  절대 지어내지 마라. 먼저 user_me 로 오늘을 확인하고, schedule_list 로 최근
-  1~2주 지난 일정 중 type=MEETING 인 것을 조회해 후보를 만들어라(같은 기간의
-  회의록이 meeting_list 에 이미 있으면 그건 후보에서 뺀다 — 이미 작성된 것).
-  ★ 조회 결과가 1~2주보다 오래된 것까지 섞여 나오더라도, **보기에는 최근 것부터
-  최대 5개까지만** 올려라 — 실사용에서 4개월치 9건이 한꺼번에 떠서 사용자가
-  혼란스러워한 사례가 있었다. 그 조회로 찾은 실제 날짜·제목만 ask_user 의
-  보기로 제시하고, text 에는 "최근 일정 중 아직 회의록이 없는 것들이에요"처럼
+  절대 지어내지 마라. 먼저 user_me 로 오늘을 확인하고, meeting_candidates
+  (projectId, fromDate, toDate) 로 후보를 가져와라(fromDate=오늘-14일 정도,
+  toDate=오늘). ★ schedule_list 와 meeting_list 를 따로 불러 네가 직접 날짜를
+  비교해서 후보를 거르지 마라 — 그 비교를 코드가 이미 정확히 해서 결과를 준다
+  (직접 비교하면 하루에 회의가 여러 건일 때 아직 안 쓴 회의까지 같이 빠질 수
+  있다). meeting_candidates 결과에 나온 실제 날짜·제목만 ask_user 의 보기로
+  제시한다 — 결과에 "다른 프로젝트 회의가 섞여 있을 수 있다"는 경고가 붙어
+  있으니, 제목이 이 프로젝트와 명백히 무관하면 참고만 하고 지어내서 걸러내진
+  마라.
+  ★ 후보가 많으면 **보기에는 최근 것부터 최대 5개까지만** 올려라 — 실사용에서
+  4개월치 9건이 한꺼번에 떠서 사용자가 혼란스러워한 사례가 있었다.
+  ★ ask_user 의 text 에는 "최근 회의 중 아직 회의록이 없는 것들이에요"처럼
   **왜 이 목록인지 한 줄로** 설명하라 — 이유 없이 날짜만 던지지 마라.
-  후보가 하나뿐이면 묻지 말고 그것으로 진행하고, 아예 없으면 "최근 회의 일정을
-  못 찾았어요, 날짜와 프로젝트를 알려주시겠어요?"처럼 자유 입력으로 물어라 —
-  보기 없이 날짜를 지어내 옵션으로 보여주는 건 절대 금지.
+  후보가 하나뿐이면 묻지 말고 그것으로 진행하고, 결과가 비었으면 "최근
+  회의록 없는 회의를 못 찾았어요, 날짜와 프로젝트를 알려주시겠어요?"처럼 자유
+  입력으로 물어라 — 보기 없이 날짜를 지어내 옵션으로 보여주는 건 절대 금지.
 - ★사용자가 **"회의록 등록했어"·"저장했어"** 처럼 저장 완료를 알리면 (초안을
   받아 화면에서 직접 저장한 경우다) 무엇을 저장했는지 되묻지 말고 이어받아라:
   1. meeting_list 로 그 프로젝트 회의록을 조회해 **가장 최근 것**을 고른다.
@@ -81,8 +87,8 @@ async def get_agent():
     if _agent is None:
         _agent = build_domain_agent(
             [user_me, project_search, project_members, schedule_list, meeting_list,
-             meeting_detail, meeting_create, meeting_draft_fill, analyze_impact,
-             recall, doc_search, ask_user, navigate],
+             meeting_candidates, meeting_detail, meeting_create, meeting_draft_fill,
+             analyze_impact, recall, doc_search, ask_user, navigate],
             DOMAIN_PROMPT,
             await get_checkpointer(),
             description_prefix="회의록 저장",

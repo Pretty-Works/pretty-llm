@@ -26,6 +26,62 @@ from app.tools.registry import RunContext
 from app.tools.write_exec import execute_write
 
 
+def _norm_title(t: str) -> str:
+    """제목 매칭용 정규화 — 공백 차이("주간회의" vs "주간 회의")로 매칭이
+    깨지는 걸 줄인다. 완벽하진 않다(단어 순서·표기가 아예 다르면 여전히 못 잡음)."""
+    return "".join((t or "").split())
+
+
+@tool
+async def meeting_candidates(projectId: int, fromDate: str, toDate: str,
+                             runtime: ToolRuntime[RunContext]) -> str:
+    """'회의는 열렸지만 아직 회의록이 없는' 후보를 찾는다 — 비교를 코드가 직접 한다.
+
+    ★ 8/12 추가 — "회의록 작성해줘"처럼 날짜를 안 짚어줄 때 이 도구로 후보를
+    만들어라. schedule_list 와 meeting_list 를 각각 불러 네가 직접 비교하지 마라 —
+    날짜만 보고 빼면 같은 날 회의가 두 개일 때(하나만 기록됨) 아직 안 쓴 회의까지
+    같이 빠지는 사고가 난다. 이 도구는 날짜+제목을 같이 대조해 그 문제를 피한다.
+
+    ⚠️ 캘린더 일정(schedule)에는 projectId 가 없어 이 프로젝트 것만 걸러올 수
+    없다 — 결과에 다른 프로젝트 회의가 섞여 나올 수 있다. 후보를 ask_user 보기로
+    보여줄 때 제목이 이 프로젝트와 명백히 무관해 보이면 사용자에게 참고로만
+    보여주고, 지어내서 걸러내지는 마라(모호하면 그냥 보여줘라).
+
+    fromDate/toDate: 캘린더에서 후보를 찾을 범위 (YYYY-MM-DD). "최근 회의록
+      작성" 요청이면 오늘-14일~오늘 정도로 넓게 잡아라(user_me 로 오늘 확인 후).
+    projectId: project_search 로 찾은 프로젝트 ID
+    """
+    ctx = runtime.context
+    schedules = await backend.get("/schedules", run_id=ctx.run_id,
+                                  **{"from": fromDate, "to": toDate})
+    meetings = await backend.get(f"/projects/{projectId}/meetings", run_id=ctx.run_id)
+
+    written = {(m.get("meetingDate"), _norm_title(m.get("title", "")))
+               for m in meetings.get("meetings", [])}
+
+    candidates: list[tuple[str, str]] = []
+    for s in schedules.get("schedules", []):
+        if s.get("type") != "MEETING":
+            continue
+        date = (s.get("startAt") or "")[:10]
+        if (date, _norm_title(s.get("title", ""))) in written:
+            continue  # 같은 날짜·같은 제목의 회의록이 이미 있다 — 후보에서 뺀다
+        candidates.append((date, s.get("title", "")))
+
+    if not candidates:
+        result = f"{fromDate}~{toDate} 기간에 회의록이 없는 회의를 찾지 못했습니다."
+        runtime.context.known_facts[f"meeting_candidates:{projectId}"] = result
+        return result
+
+    candidates.sort()
+    lines = [f"- {date} {title}" for date, title in candidates]
+    result = (f"회의록 없는 회의 후보 {len(candidates)}건 "
+              "(⚠️ 캘린더 일정엔 프로젝트 구분이 없어 다른 프로젝트 회의가 "
+              "섞여 있을 수 있다):\n" + "\n".join(lines))
+    runtime.context.known_facts[f"meeting_candidates:{projectId}"] = result
+    return result
+
+
 @tool
 async def meeting_list(projectId: int, runtime: ToolRuntime[RunContext]) -> str:
     """프로젝트의 회의록 목록을 조회한다.
@@ -188,5 +244,5 @@ async def meeting_draft_fill(projectId: int, runtime: ToolRuntime[RunContext]) -
             " 확인 후 저장하시라고 안내하세요.")
 
 
-READ_TOOLS = [meeting_list]
+READ_TOOLS = [meeting_list, meeting_candidates]
 WRITE_TOOLS = [meeting_create]

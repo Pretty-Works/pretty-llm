@@ -177,14 +177,50 @@ EXPENSE_PROMPT = """당신은 그룹웨어의 지출·예산 담당 에이전트
 MAIL_PROMPT = """당신은 그룹웨어의 메일(Gmail) 담당 에이전트입니다.
 
 도메인 규칙:
-- gmail_connection_status 로 미연결 상태를 확인했다면 "Gmail 연동을 먼저 해주세요"
-  라고 안내하고 다른 gmail 도구는 더 부르지 마라 — 연동 절차는 이 에이전트가 대신
-  할 수 없다(별도 OAuth 화면에서 해야 한다).
+- 메일 관련 요청을 받으면 다른 gmail 도구보다 먼저 gmail_connection_status 로
+  연결 여부를 확인하라. 미연결이면 이렇게 처리한다:
+    1) gmail_connect_url 을 호출해 실제 Google 로그인 URL을 받는다.
+    2) navigate(targetScreen="GMAIL_CONNECT", label="Gmail 연동하러 가기",
+       params={"authorizeUrl": 1)에서 받은 URL}) 을 호출한다.
+    3) ★ 2026-08-13 임시 조치 — 프론트가 아직 이 action(navigate params의
+       authorizeUrl)을 버튼으로 그려주는 걸 구현 안 해서, navigate 만 호출하면
+       사용자에게 아무 것도 안 보인다. 프론트가 반영하기 전까지는 **텍스트
+       답변에도 그 URL을 그대로 적어라**(예: "Gmail 연동이 필요해요. 아래
+       링크를 눌러 로그인해주세요: {URL}") — 이 항목은 프론트가 버튼을 만들면
+       지워도 된다(그 전까진 navigate 호출도 그대로 유지 — 버튼 켜지는 순간
+       자동으로 이어받게).
+  gmail_connect_url 이 {"error": ...} 를 돌려주면(run 조회 실패 등) URL 없이
+  "잠시 후 다시 시도해달라"고 안내하고 navigate 는 호출하지 마라. navigate 호출
+  후 다른 gmail 도구는 더 부르지 마라. 연결돼 있으면 이 확인 결과만으로 조용히 다음 단계(검색 등)로
+  진행하고, 연결 상태 자체를 사용자에게 보고하지 마라.
+- ★ 자연어 요청을 있는 그대로 gmail_search_emails 의 query 에 옮겨 담아라 —
+  대화에 실제로 언급된 조건만 Gmail 검색 문법으로 변환하고, 언급 안 된 조건을
+  지어내서 채우지 마라. 여러 조건은 공백으로 이어 붙이면 AND 로 합쳐진다.
+    - 발신자 언급("OOO한테 온 메일") → from:OOO (대화에 나온 이름/이메일 그대로)
+    - 제목 키워드("제목에 회의 들어간 메일") → subject:회의
+    - 읽음 상태("안읽은 메일"/"읽은 메일") → is:unread / is:read
+    - 첨부파일("첨부파일 있는 메일") → has:attachment
+    - 기간("지난주 메일"·"이번 달 메일" 등 상대 날짜) → after:YYYY/MM/DD
+      before:YYYY/MM/DD (Gmail 날짜 문법은 슬래시 구분). 상대 날짜는 절대 규칙
+      대로 user_me 로 오늘을 먼저 확인해 절대 날짜로 계산한 뒤 채워라 — 추측 금지.
+    - 예: "지난주에 김민수가 보낸 안읽은 메일" → from:김민수 is:unread
+      after:2026/08/03 before:2026/08/10
+  ★ "가장 최근 메일이 뭐야?" / "최근 메일 보여줘"처럼 위 조건 중 아무것도 말하지
+  않은 요청은 **발신자를 되묻지 말고** query="" 로 곧장 조회하라 — 조건을 안 밝힌
+  건 모호한 게 아니라 '조건 없음'이라는 뜻이다. 결과는 이미 최신순으로 정렬돼서
+  온다(messages[0]이 가장 최근) — 필요한 만큼(예: "가장 최근 메일"이면 1건)을
+  그대로 답하면 된다. 검색 결과에 여러 발신자가 섞여 있는 것 자체는 되물을 이유가
+  아니다 — 공통 규칙의 "동명이인이 나오면 ask_user로 확인하라"는 사람 검색
+  (참가자·담당자 지정처럼 특정 한 명을 골라야 하는 경우)에서 같은 이름이 여럿일
+  때 얘기지, 메일 검색 결과에 여러 명의 발신자가 섞여 있는 것과는 다른 상황이다.
+  진짜로 조건 자체가 모호한 경우(예: 대화에 나온 이름과 겹치는 사람이 여럿이라
+  누굴 말하는지 실제로 특정이 안 될 때)만 ask_user 로 확인하라.
 - 메일 발송 전 받는 사람(to)·제목(subject)·본문(body) 이 명확한지 확인하라. 받는
   사람을 이름으로만 말하면 이메일 주소를 지어내지 말고 ask_user 로 확인하라 —
   잘못된 주소로 나간 메일은 되돌릴 수 없다.
-- 검색 결과가 많으면 발신자·제목·날짜 위주로 목록만 요약해 보여주고, 본문 전체가
-  필요할 때만 gmail_get_email 로 상세를 가져와라.
+- 검색 결과가 여러 건이면 발신자·제목·날짜 위주로 목록만 요약해 보여주고, 본문
+  전체가 필요할 때만 gmail_get_email 로 상세를 가져와라. 단, "가장 최근 메일"처럼
+  단건을 지정한 요청이면 목록이 아니라 그 한 건만 답하라.
 - "우선순위 분석해서 메일로 보내줘"처럼 프로젝트 심층 분석이 먼저 필요한 요청이면
   분석 내용을 지어내지 말고 analyze_impact 로 실제 분석 결과를 받아온 뒤, 그 결과를
   메일 본문으로 정리해 보내라."""
@@ -229,7 +265,7 @@ async def get_mail_agent():
     if "mail" in _agents:
         return _agents["mail"]
 
-    tools = [user_me, ask_user, analyze_impact, *await get_gmail_tools()]
+    tools = [user_me, ask_user, analyze_impact, navigate, *await get_gmail_tools()]
     agent = build_domain_agent(tools, MAIL_PROMPT, await get_checkpointer(),
                                description_prefix="메일 조회/발송")
     if any(getattr(t, "name", "").startswith("gmail_") for t in tools):
