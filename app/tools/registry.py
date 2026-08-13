@@ -74,19 +74,25 @@ AUTO_ALLOWED: frozenset[str] = frozenset({
     "task.toggleStatus",         # 토글이라 원복
     "task.update",               # 본인 할일 내용/마감/프로젝트 수정 — 다시 고칠 수 있음
     "milestone.toggleStatus",
-    "replan.save",               # 제안 저장 — 실 데이터 변경 없음
+    # ★ replan.create(저장)는 여기 없다 — 8/9 BE 스펙 개정으로 AUTO_FORBIDDEN 으로
+    #   옮겨갔다(아래). 예전엔 여기 있었는데, 옮기면서 지우지 않아 두 목록에 동시에
+    #   있던 걸 정리했다 — 있으면 auto 모드 판정이 어느 쪽을 봐야 할지 애매해진다.
 })
 
 AUTO_FORBIDDEN: frozenset[str] = frozenset({
     "leave.create", "leave.update",          # 승인자에게 알림이 이미 감
     "schedule.create", "schedule.update",    # 참석자 전원에게 알림
     "expense.create",                        # 돈
-    "replan.save",                           # ★ 2026-08-09 BE 스펙 개정 — 저장도 승인 필요.
+    "replan.create",                         # ★ 2026-08-09 BE 스펙 개정 — 저장도 승인 필요.
                                               #   외부 텍스트를 읽고 만든 계획이 "공식 기록"이
                                               #   되는 시점이라 사람이 한 번 본다.
+                                              #   ★ 8/12 — 카탈로그 이름을 "replan.save"에서
+                                              #   BE 컨트롤러 상수/렌더러가 실제로 아는
+                                              #   "replan.create"로 맞췄다. 이름이 안 맞으면
+                                              #   BE 가 승인 카드를 못 그리거나(§ApprovalPreviewRegistry)
+                                              #   재개 검증에서 걸려 AGENT_007 로 뭉개진다.
     "replan.apply",                          # 배치 반영 + 여러 구성원에게 알림
     "gmail.send",                            # 상대방에게 실제 메일이 나감 — 되돌릴 수 없음
-    "replan.apply",                          # 배치 반영 + 여러 구성원에게 알림
 })
 
 
@@ -169,7 +175,15 @@ WRITE_TOOLS: dict[str, dict] = {
         "path_params": ("projectId", "milestoneId"),
     },
     "replan_save": {
-        "catalog": "replan.save",           # AUTO_FORBIDDEN — 승인 필요(2026-08-09 스펙 개정)
+        # ★ 8/12 — 이 딕셔너리가 "catalog"/"method"/"path"/"path_params" 를 두 번
+        #   정의하고 있었다(파이썬은 문법 오류 없이 뒤 블록으로 조용히 덮어쓴다).
+        #   그래서 실제로는 뒤 블록의 path_params=("projectId",) 가 적용돼
+        #   build_request() 가 projectId 를 바디에서 빼먹고 있었다 — BE 가 바디에도
+        #   projectId 를 기대하면 그대로 400 → AGENT_007. 아래가 원래 의도대로
+        #   하나로 합친 버전이다.
+        "catalog": "replan.create",         # AUTO_FORBIDDEN — 승인 필요(2026-08-09 스펙 개정)
+                                             #   ★ BE 컨트롤러 상수/렌더러가 아는 이름은
+                                             #   "replan.save" 가 아니라 "replan.create" 다.
         "method": "POST",
         "path": "/projects/{projectId}/replans",
         # ★ path_params 를 비워둔다 — projectId 가 경로에도, 바디에도 그대로 들어가야
@@ -177,10 +191,6 @@ WRITE_TOOLS: dict[str, dict] = {
         #   다른 프로젝트로 보내도 해시가 그대로다). path.format(**args) 는 args 에 있는
         #   키만 쓰므로 projectId 가 params 에도 남아 있어도 문제없다.
         "path_params": (),
-        "catalog": "replan.save",           # 제안 저장 — 실 데이터 변경 없음(승인 불필요)
-        "method": "POST",
-        "path": "/projects/{projectId}/replans",
-        "path_params": ("projectId",),
     },
     "replan_apply": {
         "catalog": "replan.apply",          # AUTO_FORBIDDEN — 저장분에서 꺼내 반영(승인 필요)

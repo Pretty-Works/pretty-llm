@@ -26,6 +26,7 @@ QUESTION_LIMIT = 5          # 규격: Run 당 5회 초과 시 AGENT_022 (BE 도 
 
 @tool
 def ask_user(label: str, text: str, options: list[str] | None = None,
+             option_details: list[str] | None = None,
              multiple: bool = False,
              runtime: ToolRuntime[RunContext] = None) -> str:
     """작업에 꼭 필요한 정보가 없거나 후보가 여러 개일 때 사용자에게 묻는다.
@@ -41,6 +42,12 @@ def ask_user(label: str, text: str, options: list[str] | None = None,
     text:     사용자에게 보여줄 질문 문장
     options:  보기 목록 — 사용자가 읽을 이름표를 넣는다 (예: "그룹웨어 AI 고도화").
               id 숫자를 넣지 마라. 자유 입력만 받을 거면 생략
+    option_details: ★ 8/12 추가 — options 각 항목의 부가 설명(선택). 보기 버튼 아래에
+              작게 노출된다. 넣으려면 options 와 **개수·순서를 그대로** 맞춰라(같은
+              인덱스끼리 짝지어진다). label 한 줄만으로는 차이를 알 수 없는 보기라면
+              (예: 재계획 조정안 3개 — "범위 축소" 라는 라벨만으론 실제로 무엇이
+              바뀌는지 안 보인다) 반드시 채워라 — 여기 넣은 요약(핵심 변경 사항·
+              리스크 등)을 사용자가 고르기 "전에" 미리 볼 수 있어야 한다.
     multiple: 보기를 여러 개 고를 수 있는가 (참석자 고르기 등)
     """
     # 5회 제한 — 지금까지 이 도구가 답한 횟수를 대화 기록에서 센다.
@@ -52,13 +59,19 @@ def ask_user(label: str, text: str, options: list[str] | None = None,
         return (f"질문 한도({QUESTION_LIMIT}회)를 넘어 더 물을 수 없습니다. "
                 "지금까지 아는 정보로 진행하거나, 부족하면 작업을 정리하고 종료하세요.")
 
+    opts = options or []
+    details = option_details or []
+
     # questionId 는 넣지 않는다 — BE 가 주입한다 (규격 명시)
     answer = interrupt({
         "kind": "question",              # hitl._drive 가 approval 과 구분하는 표식
         "label": label[:30],
         "text": text[:200],
-        "options": [{"id": str(i + 1), "label": o, "description": None}
-                    for i, o in enumerate(options or [])],
+        "options": [
+            {"id": str(i + 1), "label": o,
+             "description": (details[i][:200] if i < len(details) and details[i] else None)}
+            for i, o in enumerate(opts)
+        ],
         "multiple": multiple,
         "allowFreeText": True,           # 보기가 있어도 자유 입력은 항상 허용
     })

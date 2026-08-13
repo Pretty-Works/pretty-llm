@@ -23,6 +23,7 @@ from langgraph.types import Send
 from app.config import get_settings
 from app.engine_b.analysis_router import route
 from app.engine_b import context_builder
+from app.engine_b.apply_builder import build_operations
 from app.engine_b.context_builder import build_context
 from app.engine_b.synthesis import synthesize
 from app.engine_b.validator import validate, validate_synthesis
@@ -124,6 +125,28 @@ def _validator_node(state: EngineBState) -> dict[str, Any]:
     }
 
 
+#   ★ 8/12 추가 — synthesis 가 낸 proposed_changes 가 apply_builder(반영 단계 파서)
+#   스펙에 안 맞으면, 예전엔 여기선 아무도 안 잡고 두 단계 뒤(replan_tools.py)에서야
+#   걸려서 그 조정안 전체를 통째로 버렸다("3안 만들었는데 1안만 남는다" 증상의 근본
+#   원인). 워커 재시도(validator ↔ 워커 노드)와 같은 패턴으로, synthesis 직후 여기서
+#   바로 apply_builder 를 돌려보고 실패하면 거부 사유를 피드백으로 얹어 synthesis 를
+#   한 번 더 부른다. 그래도 안 되면(재시도 한도 초과) 그 시점 결과를 그대로 쓴다 —
+#   proposed_changes 가 여전히 안 맞으면 replan_tools.py 가 예전처럼 걸러내고, 이제는
+#   그 이유도 사용자에게 보인다(⚠️ 문구, 8/12 이전 수정).
+_SYNTHESIS_APPLY_RETRY_LIMIT = 1  # 최초 1회 + 실패 시 피드백 재시도 1회
+
+
+def _render_apply_rejections(rejected: list[dict]) -> str:
+    lines = []
+    for r in rejected:
+        change = r.get("change") or {}
+        lines.append(
+            f"- target={change.get('target')!r} kind={change.get('kind')!r} "
+            f"after={change.get('after')!r} → 거부 사유: {r.get('reason')}"
+        )
+    return "\n".join(lines) or "- (거부 사유 없음)"
+
+
 async def _synthesis_node(state: EngineBState) -> dict[str, Any]:
     context = state["context"]
     outputs = state.get("worker_outputs") or []
@@ -140,13 +163,41 @@ async def _synthesis_node(state: EngineBState) -> dict[str, Any]:
         ]
         log.warning("근거 검증 실패로 답변에서 제외한 축: %s", sorted(dropped))
 
-    result = await synthesize(
-        outputs,
-        state["plan"],
-        context,
-        validation,
-        state.get("scenario"),
-    )
+    # ★ 8/12 — apply_builder 재시도 루프는 위에서 걸러낸 `outputs`(근거 검증 통과분만)를
+    #   써야 한다. state.get("worker_outputs") 원본을 다시 읽으면 방금 뺀 축이 도로
+    #   섞여 들어가 Data Gate 필터링이 조용히 무력화된다.
+    apply_feedback: str | None = None
+    apply_retries = 0
+    result: SynthesisResult
+
+    while True:
+        result = await synthesize(
+            outputs,
+            state["plan"],
+            context,
+            validation,
+            state.get("scenario"),
+            apply_feedback=apply_feedback,
+        )
+        if not result.proposed_changes:
+            break  # 반영 제안이 없으면 apply_builder 검증 자체가 의미 없다
+
+        built = build_operations(result)
+        if built.ok:
+            break
+        if apply_retries >= _SYNTHESIS_APPLY_RETRY_LIMIT:
+            log.warning(
+                "synthesis proposed_changes 가 apply_builder 를 계속 통과 못 함 "
+                "(재시도 한도 초과, %d건 거부) — 그대로 둔다: %s",
+                len(built.rejected), built.rejected,
+            )
+            break
+        apply_retries += 1
+        apply_feedback = _render_apply_rejections(built.rejected)
+        log.info(
+            "synthesis proposed_changes 가 apply_builder 거부(%d건) — 피드백과 함께 재시도 %d/%d",
+            len(built.rejected), apply_retries, _SYNTHESIS_APPLY_RETRY_LIMIT,
+        )
 
     # DB 변경 제안은 사람이 승인하기 직전이므로 한 번 더 훑는다.
     result.unresolved_violations += validate_synthesis(result, context)
@@ -162,6 +213,7 @@ async def _synthesis_node(state: EngineBState) -> dict[str, Any]:
                     "actions": len(result.actions),
                     "conflicts": len(result.conflicts),
                     "requires_approval": result.requires_approval,
+                    "apply_retries": apply_retries,
                 },
             )
         ],
