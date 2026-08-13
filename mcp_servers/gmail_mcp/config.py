@@ -41,6 +41,21 @@ class GmailMcpSettings(BaseSettings):
     mcp_server_host: str = "0.0.0.0"
     mcp_server_port: int = 8100
 
+    # ─── MCP 엔드포인트(/mcp) Host 헤더 검증 (DNS rebinding 방지) ────
+    # ★ 2026-08-13 발견된 버그 — mcp_tools.py 의 FastMCP(...) 가 host= 를 안 넘기면
+    #   SDK 기본값 "127.0.0.1"로 판단해서 자동으로
+    #   allowed_hosts=["127.0.0.1:*","localhost:*","[::1]:*"] 만 허용해버린다
+    #   (mcp/server/fastmcp/server.py __init__ 참고. 이 host 값은 uvicorn 바인딩
+    #   주소인 mcp_server_host 와는 별개다 — 순수히 이 DNS-rebinding 방지용
+    #   Host 헤더 검증에만 쓰인다). Docker Compose 내부망에서 Agent가 이 서버를
+    #   "gmail-mcp:8100" 이라는 Host 헤더로 부르니 위 목록에 없어 매번
+    #   421 Invalid Host header 로 막혔다. 실제 배포 토폴로지의 호스트명을
+    #   여기서 쉼표로 열거한다 — 배포 주소가 바뀌면 .env 로 덮어쓰면 된다.
+    mcp_allowed_hosts: str = Field(
+        default="localhost:8100,127.0.0.1:8100,gmail-mcp:8100",
+        validation_alias="GMAIL_MCP_ALLOWED_HOSTS",
+    )
+
     # 연결 완료 후 사용자를 돌려보낼 Company Copilot 프론트 URL
     frontend_success_redirect: str = "http://localhost:3000/settings/integrations?gmail=connected"
     frontend_failure_redirect: str = "http://localhost:3000/settings/integrations?gmail=failed"

@@ -21,11 +21,26 @@ dev_run_id_passthrough 로 로컬 테스트를 돌릴 수 있다. API 나오면 
 from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from mcp_servers.gmail_mcp import gmail_api, run_resolver, token_resolver
+from mcp_servers.gmail_mcp.config import get_settings
 from mcp_servers.gmail_mcp.logger import get_logger
 
 log = get_logger("mcp_tools")
+
+# ★ 2026-08-13 — FastMCP(...)에 host= 를 안 넘기면 SDK가 기본값 "127.0.0.1"로
+#   판단해 DNS-rebinding 방지용 Host 헤더 허용 목록을 자동으로
+#   ["127.0.0.1:*","localhost:*","[::1]:*"] 로만 좁혀버린다(mcp/server/fastmcp/
+#   server.py). Docker Compose 내부망에서 Agent가 이 서버를 "gmail-mcp:8100"
+#   Host 헤더로 부르니 항상 421 Invalid Host header 로 막혔다 — 실제 배포
+#   호스트명을 config.py(GMAIL_MCP_ALLOWED_HOSTS)에서 읽어와 명시적으로 허용한다.
+_allowed_hosts = [h.strip() for h in get_settings().mcp_allowed_hosts.split(",") if h.strip()]
+_transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=_allowed_hosts,
+    allowed_origins=[f"{scheme}://{h}" for h in _allowed_hosts for scheme in ("http", "https")],
+)
 
 mcp = FastMCP(
     name="gmail",
@@ -37,6 +52,7 @@ mcp = FastMCP(
     # server.py 에서 app.mount("/mcp", ...) 로 이미 바깥쪽 경로를 잡아주고 있으므로,
     # 여기서는 "/" 로 둬야 최종 경로가 /mcp/mcp 가 아니라 /mcp 가 된다.
     streamable_http_path="/",
+    transport_security=_transport_security,
 )
 
 
