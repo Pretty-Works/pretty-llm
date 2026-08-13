@@ -139,10 +139,12 @@ async def gmail_connect_url(run_id: str) -> dict:
     """★ 2026-08-13 추가 — gmail_connection_status 로 미연결을 확인했으면 이걸 불러서
     실제 Google 로그인 URL을 받아라. 이 URL 자체엔 토큰이나 비밀정보가 없다(서명된
     state 값만 담긴다) — 사용자가 클릭하면 Google 동의화면으로 이동해서 연동을
-    끝낼 수 있다. app/tools/navigate.py 의 navigate(targetScreen=..., params={
-    "authorizeUrl": 이 함수가 준 URL}) 로 넘겨서 사용자에게 클릭 버튼으로
-    보여줘라 — URL을 텍스트로 그대로 답하지 마라(절대 규칙 2번과 같은 이유:
-    말로만 하면 화면에 클릭 가능한 버튼이 안 생긴다).
+    끝낼 수 있다. app/tools/navigate.py 의 open_external_url(url=이 함수가 준 URL,
+    label="Gmail 연동하러 가기") 로 넘겨서 사용자에게 클릭 버튼으로 보여줘라 —
+    ★ navigate 가 아니라 반드시 open_external_url 이다(navigate 는 이 그룹웨어
+    내부 화면만 가리킬 수 있고, 외부 URL 의 origin 검사는 open_external_url
+    경로에서만 이뤄진다). URL을 텍스트로 그대로 답하지 마라(절대 규칙 2번과
+    같은 이유: 말로만 하면 화면에 클릭 가능한 버튼이 안 생긴다).
 
     run_id→user_id 조회 자체가 실패하면(run 만료 등) {"error": "..."} 를 돌려준다
     — 이땐 URL 없이 "잠시 후 다시 시도해달라"고 안내하라."""

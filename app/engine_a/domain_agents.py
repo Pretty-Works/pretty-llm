@@ -30,7 +30,7 @@ from app.tools.memory_tool import doc_search, recall
 from app.tools.ask_user import ask_user
 from app.tools.expense_tool import budget_summary, expense_create, expense_list
 from app.tools.meeting_tool import meeting_list
-from app.tools.navigate import navigate
+from app.tools.navigate import navigate, open_external_url
 from app.tools.project_tool import project_members, project_search
 from app.tools.read_errors import read_error_middleware
 from app.tools.registry import RunContext, is_write
@@ -193,19 +193,18 @@ MAIL_PROMPT = """당신은 그룹웨어의 메일(Gmail) 담당 에이전트입�
 - 메일 관련 요청을 받으면 다른 gmail 도구보다 먼저 gmail_connection_status 로
   연결 여부를 확인하라. 미연결이면 이렇게 처리한다:
     1) gmail_connect_url 을 호출해 실제 Google 로그인 URL을 받는다.
-    2) navigate(targetScreen="GMAIL_CONNECT", label="Gmail 연동하러 가기",
-       params={"authorizeUrl": 1)에서 받은 URL}) 을 호출한다.
-    3) ★ 2026-08-13 임시 조치 — 프론트가 아직 이 action(navigate params의
-       authorizeUrl)을 버튼으로 그려주는 걸 구현 안 해서, navigate 만 호출하면
-       사용자에게 아무 것도 안 보인다. 프론트가 반영하기 전까지는 **텍스트
-       답변에도 그 URL을 그대로 적어라**(예: "Gmail 연동이 필요해요. 아래
-       링크를 눌러 로그인해주세요: {URL}") — 이 항목은 프론트가 버튼을 만들면
-       지워도 된다(그 전까진 navigate 호출도 그대로 유지 — 버튼 켜지는 순간
-       자동으로 이어받게).
+    2) open_external_url(url=1번에서 받은 URL, label="Gmail 연동하러 가기") 을
+       호출한다 — ★ navigate 가 아니다. navigate 는 이 그룹웨어 내부 화면으로만
+       안내할 수 있고, Google 로그인처럼 외부 URL 로 나가는 버튼은
+       open_external_url 로만 만들 수 있다(서버가 origin 을 검사하는 유일한
+       경로다). url 은 지어내지 말고 gmail_connect_url 이 돌려준 값을 그대로
+       옮겨라.
   gmail_connect_url 이 {"error": ...} 를 돌려주면(run 조회 실패 등) URL 없이
-  "잠시 후 다시 시도해달라"고 안내하고 navigate 는 호출하지 마라. navigate 호출
-  후 다른 gmail 도구는 더 부르지 마라. 연결돼 있으면 이 확인 결과만으로 조용히 다음 단계(검색 등)로
-  진행하고, 연결 상태 자체를 사용자에게 보고하지 마라.
+  "잠시 후 다시 시도해달라"고 안내하고 open_external_url 은 호출하지 마라.
+  open_external_url 호출 후 다른 gmail 도구는 더 부르지 말고, 그 응답을 그대로
+  마무리 답변으로 삼아라(URL을 텍스트로 다시 적지 마라 — 버튼이 이미 뜬다).
+  연결돼 있으면 이 확인 결과만으로 조용히 다음 단계(검색 등)로 진행하고, 연결
+  상태 자체를 사용자에게 보고하지 마라.
 - ★ 자연어 요청을 있는 그대로 gmail_search_emails 의 query 에 옮겨 담아라 —
   대화에 실제로 언급된 조건만 Gmail 검색 문법으로 변환하고, 언급 안 된 조건을
   지어내서 채우지 마라. 여러 조건은 공백으로 이어 붙이면 AND 로 합쳐진다.
@@ -278,7 +277,8 @@ async def get_mail_agent():
     if "mail" in _agents:
         return _agents["mail"]
 
-    tools = [user_me, ask_user, analyze_impact, navigate, *await get_gmail_tools()]
+    tools = [user_me, ask_user, analyze_impact, navigate, open_external_url,
+             *await get_gmail_tools()]
     agent = build_domain_agent(tools, MAIL_PROMPT, await get_checkpointer(),
                                description_prefix="메일 조회/발송")
     if any(getattr(t, "name", "").startswith("gmail_") for t in tools):

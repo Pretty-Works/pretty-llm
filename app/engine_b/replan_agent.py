@@ -40,7 +40,7 @@ from app.engine_b.replan_tools import (
     replan_save,
 )
 from app.tools.ask_user import ask_user
-from app.tools.navigate import navigate
+from app.tools.navigate import navigate, open_external_url
 
 DOMAIN_PROMPT = """당신은 그룹웨어의 재계획(Replan) 담당 에이전트입니다.
 
@@ -51,18 +51,26 @@ DOMAIN_PROMPT = """당신은 그룹웨어의 재계획(Replan) 담당 에이전�
   발화에 프로젝트 ID가 숫자로 나와 있으면, query 텍스트에 적는 것과 별개로
   project_id 인자에도 그 값을 그대로 넣어라 — 이름만으로는 라우터가 프로젝트를
   못 찾을 수 있다.
-- 3안이 나오면 곧장 저장하지 마라. 먼저 ask_user 로 3안을 보기로 제시하고 하나를
-  고르게 하라. options 에는 한글 라벨(예: "일정 조정 (추천)")을 넣어라.
-  ★ option_details 를 반드시 함께 채워라 — options 와 **개수·순서를 그대로**
-  맞춘 리스트로, propose_replan_scenarios 결과에 나온 그 안의 "구체적 변경
-  내용"(누가·무엇을·언제, operations 의 숫자 ID 대신 이걸 써라 — 사람이 못
-  읽는다)과 risk 를 바탕으로 "이 안으로 바꾸면 무엇이 어떻게 바뀌는지"를 한글로
-  1~2문장 정리해 넣어라(예: "마일스톤 목표일을 2주 뒤로 미루고 작업 3건의
-  마감일도 함께 조정합니다. 리스크: 낮음"). 라벨 한 줄만으로는 각 안의 차이가
-  안 보이므로, 사용자가 버튼을 누르기 전에 이 설명으로 먼저 구분할 수 있어야
-  한다. text 에는 3안 전체를 관통하는 핵심 차이(일정회복·비용·리스크)를
-  요약해라 — option_details 가 안 하나하나의 설명이라면 text 는 3안을 비교하는
-  전체 맥락이다.
+- ★ 2026-08-13 재작성 — option_details(보기 버튼 아래에 뜨는 부가 설명)는 FE
+  확인 결과 애초에 렌더링할 자리가 없어서 화면에 절대 안 뜬다는 게 확정됐다.
+  그래서 이제 설명은 버튼이 아니라 ask_user 의 **text 인자 하나**로 전부
+  보여준다 — 사용자에게는 이 text 가 버튼보다 먼저 하나의 메시지로 뜨고, 그
+  아래 3개 버튼이 달리는 구조다.
+  3안이 나오면 곧장 저장하지 마라. propose_replan_scenarios 결과(tradeoff·각
+  안의 summary·risk·"구체적 변경 내용")를 근거로, 지어내지 말고 그 결과에
+  실제로 나온 내용만 써서 다음 구조의 글을 ask_user(text=...) 에 담아 물어라:
+    1) 재계획이 필요한 현재 상황과 이유를 1~2문장으로 설명한다(예: "OOO 담당자가
+       휴가로 일정이 밀릴 상황입니다" 등 — propose_replan_scenarios 를 부르기
+       전 대화에서 이미 나온 이유를 활용).
+    2) "다음 N가지 방향을 고려할 수 있습니다"로 이어서, 안마다 번호를 매겨
+       무엇을 바꾸는지(누가·무엇을·언제) · 기대 효과 · 리스크(트레이드오프)를
+       짧은 문단으로 적는다 — 3안 전체를 한 번에 훑어볼 수 있어야 한다.
+    3) 마지막 문장은 "어떤 방향으로 재계획할까요?" 류로 선택을 유도하며
+       끝낸다.
+  options 에는 한글 라벨만 짧게 넣어라(예: "인력 재배치 (추천)") — 설명은 이미
+  text 에 다 있으니 라벨에 욱여넣지 마라. option_details 도 값 자체는 채워
+  두되(향후 FE 지원 대비, 채워도 손해는 없다) 지금 당장 화면에 보인다고
+  가정하지 말고 text 쪽 분량을 우선하라.
 - 사용자가 하나를 고르면, propose_replan_scenarios 결과에 나온 scenarioType·
   summary·risk·operations 를 그대로 옮겨 적어 replan_save(projectId, reason,
   scenarios) 를 호출해 저장하라. scenarios 인자엔 사용자가 고른 안 하나만 담아도
@@ -102,16 +110,15 @@ DOMAIN_PROMPT = """당신은 그룹웨어의 재계획(Replan) 담당 에이전�
   문제라면 기존대로 파라미터를 고쳐 다시 호출해라.
 - 반영(replan_apply)까지 끝난 뒤 사용자가 "팀원에게 메일로 알려줘" 처럼 메일 발송을
   요청하면, gmail_connection_status 로 먼저 연결 여부를 확인하라. 미연결이면
-  gmail_connect_url 을 호출해 실제 Google 로그인 URL을 받은 뒤 navigate(
-  targetScreen="GMAIL_CONNECT", label="Gmail 연동하러 가기",
-  params={"authorizeUrl": 받은 URL}) 를 호출하라(연동 절차는 이 에이전트가
-  대신 못 한다). ★ 2026-08-13 임시 조치 — 프론트가 아직 이 action을 버튼으로
-  안 그려줘서 navigate만 호출하면 사용자에게 아무 것도 안 보인다. 프론트가
-  반영하기 전까지는 **텍스트 답변에도 그 URL을 그대로 적어라**(예: "Gmail
-  연동이 필요해요. 아래 링크를 눌러 로그인해주세요: {URL}") — 프론트가 버튼을
-  만들면 이 문장은 지워도 된다. gmail_connect_url 이 {"error": ...} 를
-  돌려주면 URL 없이 "잠시 후 다시 시도해달라"고 안내하고 navigate 는 호출하지
-  마라. navigate 호출 후 끝내라.
+  gmail_connect_url 을 호출해 실제 Google 로그인 URL을 받은 뒤
+  open_external_url(url=받은 URL, label="Gmail 연동하러 가기") 를 호출하라
+  (연동 절차는 이 에이전트가 대신 못 한다). ★ navigate 가 아니다 — navigate 는
+  이 그룹웨어 내부 화면으로만 안내할 수 있고, Google 로그인처럼 외부 URL 로
+  나가는 버튼은 open_external_url 로만 만들 수 있다(서버가 origin 을 검사하는
+  유일한 경로다). url 은 지어내지 말고 gmail_connect_url 이 돌려준 값을 그대로
+  옮겨라. gmail_connect_url 이 {"error": ...} 를 돌려주면 URL 없이 "잠시 후
+  다시 시도해달라"고 안내하고 open_external_url 은 호출하지 마라.
+  open_external_url 호출 후 끝내라(URL을 텍스트로 다시 적지 마라 — 버튼이 이미 뜬다).
   연결돼 있으면 gmail_send_email 로 보내되, 받는 사람 이메일 주소가 없으면 지어내지
   말고 ask_user 로 확인하라 — 잘못된 주소로 나간 메일은 되돌릴 수 없다. 메일 본문에는
   반영된 방안(scenarioType)과 핵심 변경 사항을 요약해 담아라.
@@ -133,7 +140,7 @@ async def get_agent():
         return _agent
 
     tools = [propose_replan_scenarios, replan_save, ask_user, replan_apply, navigate,
-             *await get_gmail_tools()]
+             open_external_url, *await get_gmail_tools()]
     agent = build_domain_agent(
         tools,
         DOMAIN_PROMPT,
