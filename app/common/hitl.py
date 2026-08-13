@@ -91,6 +91,7 @@ def _shape(result: dict, thread_id: str) -> dict:
 
 import asyncio
 import time
+import re
 from collections.abc import AsyncIterator
 
 from app.common import sse
@@ -112,6 +113,15 @@ log = get_logger("common.hitl")
 #   컨테이너로 늘어나면 프로세스별 세마포어만으론 전체 동시성을 못 막으므로,
 #   그때는 Redis 등 전역 rate limiter 로 바꿔야 한다(별도 검토 필요).
 _AGENT_SEMAPHORE = asyncio.Semaphore(get_settings().agent_concurrency_limit)
+
+# ★ 8/13 추가 — COMMON_RULES 가 "작업 완료 보고:" 로 시작하지 말라고 명시적으로
+#   금지했는데도(그 문구가 규칙의 "잘못" 예시 그 자체) 실사용에서 그대로 나온
+#   사례가 있었다. 프롬프트만으론 한계가 있어, 최종 답변에서 코드로 한 번 더 잘라낸다.
+_BANNED_PREFIX = re.compile(r"^\s*작업\s*완료\s*보고\s*[:：]\s*")
+
+
+def _strip_banned_prefix(text: str) -> str:
+    return _BANNED_PREFIX.sub("", text, count=1)
 
 # 도구 이름 → 사용자에게 보여줄 진행 문구 (step.text 는 FE 에 그대로 노출됨)
 #   ★ 도구를 추가하면 여기도 채운다. 빠뜨리면 "ask_user 실행 중..." 처럼 **영어
@@ -190,7 +200,8 @@ def build_resume_command(kind: str, decision: str | None = None,
                          reason: str | None = None,
                          answer: str | None = None,
                          alternative_id: str | None = None,
-                         n_requests: int = 1) -> Command:
+                         n_requests: int = 1,
+                         interrupt_ids: list[str] | None = None) -> Command:
     """재개 입력을 Command 로 조립한다. kind: approval | question
 
     형식이 둘인 이유: 미들웨어 interrupt(승인)는 decisions 목록 봉투를
@@ -198,8 +209,19 @@ def build_resume_command(kind: str, decision: str | None = None,
 
     n_requests: 대기 중인 승인 요청 수. 미들웨어는 요청 수만큼 decision 을
     요구하므로 (LLM 이 병렬 쓰기를 한 경우) 같은 결정을 복제한다.
+
+    ★ 8/13 추가 — interrupt_ids: 대기 중인 interrupt 가 **2개 이상이면**
+      langgraph 가 "어느 interrupt 에 대한 답인지" id 를 요구한다
+      (RuntimeError: When there are multiple pending interrupts...).
+      LLM 이 ask_user 를 병렬로 두 번 부르면 실제로 이 상태가 되고, 그때
+      Command(resume=값) 만 보내면 실행이 통째로 죽는다(실측: test_action 3/3 재현).
+      그래서 id 가 2개 이상 넘어오면 {id: 값} 맵으로 만들어 전부 같은 답을 준다 —
+      우리 규격상 BE 는 질문 하나에 대한 답만 보내오므로, 남은 interrupt 를 그대로
+      두면 재개가 영영 안 끝난다.
     """
     if kind == "question":
+        if interrupt_ids and len(interrupt_ids) > 1:
+            return Command(resume={iid: answer for iid in interrupt_ids})
         return Command(resume=answer)
 
     if decision == "APPROVED":
@@ -368,6 +390,66 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
             if title:
                 done_payload["title"] = title
             yield sse.sse_event("done", done_payload)
+    # "custom" 을 같이 구독하는 이유: 오래 걸리는 도구(analyze_impact 의 엔진 B)가
+    # 실행 도중 runtime.stream_writer 로 밀어 넣는 진행상황을 step 으로 중계해야
+    # 90초 무이벤트 차단(규격)에 안 걸린다.
+    async for mode, chunk in agent.astream(agent_input, config=config, context=ctx,
+                                           stream_mode=["updates", "custom"]):
+        if mode == "custom":
+            text = chunk.get("text") if isinstance(chunk, dict) else str(chunk)
+            if text:
+                yield sse.step(str(text)[:100])
+            continue
+
+        update = chunk
+        # ① 멈춤 — 무엇이 멈췄는지에 따라 이벤트가 갈린다. 스트림은 둘 다 닫는다.
+        #    · 미들웨어가 쓰기 도구를 가로챔  → approval_request
+        #    · ask_user 가 스스로 interrupt() → question
+        #    멈춘 위치는 checkpointer 가 이미 저장했다 (runId 로 복원 가능).
+        if "__interrupt__" in update:
+            value = update["__interrupt__"][0].value
+            if isinstance(value, dict) and value.get("kind") == "question":
+                payload = {k: v for k, v in value.items() if k != "kind"}
+                yield sse.sse_event("question", payload)
+            else:
+                payload = await _approval_payload(update["__interrupt__"], tool_call_ids, run_id)
+                yield sse.sse_event("approval_request", payload)
+            return
+
+        for node_output in update.values():
+            for msg in (node_output or {}).get("messages", []):
+                # ② 모델이 도구 호출을 결정 → step
+                for tc in getattr(msg, "tool_calls", None) or []:
+                    if tc["id"] in seen_calls:
+                        continue
+                    seen_calls.add(tc["id"])
+                    tool_call_ids[tc["name"]] = tc["id"]
+                    yield sse.step(_step_text(tc["name"]))
+                # ③ 최종 답 후보 (도구 호출 없는 AI 텍스트)
+                if getattr(msg, "type", "") == "ai" and not getattr(msg, "tool_calls", None):
+                    text = msg.text if isinstance(msg.text, str) else msg.content
+                    final_text = _strip_banned_prefix(text) if isinstance(text, str) else text
+
+    # ④ 완주 — 단독 실행이면 done 을 내보내고, 복합 실행의 중간 작업이면
+    #    sink 로 결과만 전달한다 (done 은 복합 실행기가 마지막에 한 번).
+    #    action 은 도구가 RunContext 에 기록해 둔 것 (meeting_create·navigate·fill_form).
+    if result_sink is not None:
+        result_sink["answer"] = final_text
+        result_sink["action"] = ctx.action
+        result_sink["completed"] = True
+    if emit_done:
+        # ★ 8/12 변경 — 채팅 목록 제목(BE GET /agent/conversations 의 title)에
+        #   쓸 값을 done 바디에 실어야 해서, 더 이상 fire()(발사 후 망각)가 아니라
+        #   done 을 내보내기 "전에" await 한다. LLM 호출 1번만큼 지연이 늘지만,
+        #   그래야 BE 가 title 을 그대로 저장할 수 있다(자세한 이유는
+        #   app/memory/summarize.py 모듈 docstring). 실패해도 None 이라 done 자체는
+        #   막지 않는다 — 이때는 title 필드를 아예 안 실어 BE 가 첫 질문으로 폴백한다.
+        from app.memory.summarize import summarize_run
+        title = await summarize_run(ctx.run_id, ctx.conversation_id, ctx.goal or "", final_text)
+        done_payload = {"answer": final_text, "action": ctx.action}
+        if title:
+            done_payload["title"] = title
+        yield sse.sse_event("done", done_payload)
 
 
 async def _approval_payload(interrupts, tool_call_ids: dict[str, str], run_id: str) -> dict:

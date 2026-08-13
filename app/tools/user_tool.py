@@ -32,9 +32,21 @@ async def user_me(runtime: ToolRuntime[RunContext]) -> str:
     this_week = " ".join(f"{days[i]}={(start + timedelta(i)).isoformat()}" for i in range(7))
     next_week = " ".join(f"{days[i]}={(start + timedelta(7 + i)).isoformat()}" for i in range(7))
 
+    # ★ 8/13 추가 — 요일표만으로는 "내일"을 못 맞힌다. 요일표를 쓰려면 LLM 이
+    #   "오늘=목 → 내일은 금 → 표에서 금을 찾기" 2단계를 거쳐야 하는데 그 중간에
+    #   틀린다(실측: 오늘이 목 8/13 인데 "내일 오후 2시"를 8/13 으로 등록).
+    #   요일표와 같은 원칙으로 이 표현들도 계산 없이 바로 고르게 펼쳐 둔다.
+    today = date.fromisoformat(r["today"])
+    relative = " ".join(
+        f"{label}={(today + timedelta(delta)).isoformat()}"
+        for label, delta in (("그저께", -2), ("어제", -1), ("오늘", 0),
+                             ("내일", 1), ("모레", 2), ("글피", 3))
+    )
+
     return (f"[{r['userId']}] {r['name']} · {r['department']} {r['position']} · "
             f"프로젝트 생성 권한: {'있음' if r.get('canCreateProject') else '없음'}\n"
             f"오늘: {r['today']} ({r['todayDayOfWeek']})\n"
+            f"기준일: {relative}\n"
             f"이번 주: {this_week}\n다음 주: {next_week}\n"
             f"(상대 날짜는 반드시 이 표에서 골라 쓰고, 직접 계산하지 마세요)")
 
