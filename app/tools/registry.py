@@ -100,8 +100,11 @@ AUTO_FORBIDDEN: frozenset[str] = frozenset({
 # ③ 쓰기 도구 명세
 #
 #    규칙 1 — 도구 인자 이름 = 내부 API 요청 바디 필드 이름.
-#      경로 파라미터만 path_params 로 빼고, 나머지가 그대로 params 가 된다.
-#      "인자 → params" 변환에 사람이 개입할 여지가 없어 해시가 어긋나지 않는다.
+#      인자 전부가 그대로 params(요청 바디)가 된다. ★ path_params 는 항상 () 로
+#      둔다 — 경로변수(projectId 등)도 바디에 남아야 한다. 승인 해시가 바디만
+#      덮으므로 바디에서 빼면 승인의 보호를 못 받고, BE 승인 카드 렌더러도
+#      바디에서 이 값들을 필수로 읽는다(없으면 AGENT_007). 값을 넣는 순간
+#      그 도구는 죽는다 — 8/12에 쓰기 8종이 이걸로 전멸했었다.
 #
 #    규칙 2 — 키는 LangChain 도구 이름(meeting_create), catalog 는 규격 이름(meeting.create).
 #      OpenAI 함수명에는 점(.)을 못 쓰므로 둘을 나눈다. 승인 이벤트의 tool 필드와
@@ -118,7 +121,7 @@ WRITE_TOOLS: dict[str, dict] = {
         "catalog": "meeting.create",
         "method": "POST",
         "path": "/projects/{projectId}/meetings",
-        "path_params": ("projectId",),
+        "path_params": (),
     },
     "leave_create": {
         "catalog": "leave.create",          # AUTO_FORBIDDEN — auto 모드에도 항상 사람 승인
@@ -130,7 +133,7 @@ WRITE_TOOLS: dict[str, dict] = {
         "catalog": "leave.update",
         "method": "PATCH",
         "path": "/leaves/{leaveId}",
-        "path_params": ("leaveId",),
+        "path_params": (),
     },
     "task_create": {
         "catalog": "task.create",           # 배치 — body {"tasks":[...]} 1~10건 단일 트랜잭션
@@ -142,13 +145,13 @@ WRITE_TOOLS: dict[str, dict] = {
         "catalog": "task.toggleStatus",
         "method": "PATCH",
         "path": "/tasks/{taskId}/status",
-        "path_params": ("taskId",),
+        "path_params": (),
     },
     "task_update": {
         "catalog": "task.update",           # PUT 전체 교체 — content/projectId/dueDate 항상 셋 다 보낸다
-        "method": "PUT",
+        "method": "PUT",                    # ⚠️ BE 에 이 엔드포인트가 아직 없다 — 합의 대기
         "path": "/tasks/{taskId}",
-        "path_params": ("taskId",),
+        "path_params": (),
     },
     "schedule_create": {
         "catalog": "schedule.create",
@@ -160,19 +163,19 @@ WRITE_TOOLS: dict[str, dict] = {
         "catalog": "schedule.update",
         "method": "PATCH",
         "path": "/schedules/{scheduleId}",
-        "path_params": ("scheduleId",),
+        "path_params": (),
     },
     "expense_create": {
         "catalog": "expense.create",
         "method": "POST",
         "path": "/projects/{projectId}/expenses",
-        "path_params": ("projectId",),
+        "path_params": (),
     },
     "milestone_toggle_status": {
         "catalog": "milestone.toggleStatus",
         "method": "PATCH",
         "path": "/projects/{projectId}/milestones/{milestoneId}/status",
-        "path_params": ("projectId", "milestoneId"),
+        "path_params": (),
     },
     "replan_save": {
         # ★ 8/12 — 이 딕셔너리가 "catalog"/"method"/"path"/"path_params" 를 두 번
@@ -211,7 +214,6 @@ WRITE_TOOLS: dict[str, dict] = {
 MCP_WRITE_TOOLS: dict[str, dict] = {
     "gmail_send_email": {
         "catalog": "gmail.send",   # AUTO_FORBIDDEN — 상대방에게 실제 메일이 나가는 되돌릴 수 없는 행동
-        "path_params": ("projectId", "replanId"),
     },
 }
 
