@@ -89,11 +89,21 @@ def _shape(result: dict, thread_id: str) -> dict:
 #  예외 처리는 여기서 하지 않는다 — api 층이 감싸서 error 이벤트를 보장한다.
 # ═══════════════════════════════════════════════════════════
 
+import re
 from collections.abc import AsyncIterator
 
 from app.common import sse
 from app.common.run_context import current_run_id
 from app.tools.registry import WRITE_TOOLS, RunContext, build_request, catalog_name, is_mcp_write
+
+# ★ 8/13 추가 — COMMON_RULES 가 "작업 완료 보고:" 로 시작하지 말라고 명시적으로
+#   금지했는데도(그 문구가 규칙의 "잘못" 예시 그 자체) 실사용에서 그대로 나온
+#   사례가 있었다. 프롬프트만으론 한계가 있어, 최종 답변에서 코드로 한 번 더 잘라낸다.
+_BANNED_PREFIX = re.compile(r"^\s*작업\s*완료\s*보고\s*[:：]\s*")
+
+
+def _strip_banned_prefix(text: str) -> str:
+    return _BANNED_PREFIX.sub("", text, count=1)
 
 # 도구 이름 → 사용자에게 보여줄 진행 문구 (step.text 는 FE 에 그대로 노출됨)
 #   ★ 도구를 추가하면 여기도 채운다. 빠뜨리면 "ask_user 실행 중..." 처럼 **영어
@@ -172,7 +182,8 @@ def build_resume_command(kind: str, decision: str | None = None,
                          reason: str | None = None,
                          answer: str | None = None,
                          alternative_id: str | None = None,
-                         n_requests: int = 1) -> Command:
+                         n_requests: int = 1,
+                         interrupt_ids: list[str] | None = None) -> Command:
     """재개 입력을 Command 로 조립한다. kind: approval | question
 
     형식이 둘인 이유: 미들웨어 interrupt(승인)는 decisions 목록 봉투를
@@ -180,8 +191,19 @@ def build_resume_command(kind: str, decision: str | None = None,
 
     n_requests: 대기 중인 승인 요청 수. 미들웨어는 요청 수만큼 decision 을
     요구하므로 (LLM 이 병렬 쓰기를 한 경우) 같은 결정을 복제한다.
+
+    ★ 8/13 추가 — interrupt_ids: 대기 중인 interrupt 가 **2개 이상이면**
+      langgraph 가 "어느 interrupt 에 대한 답인지" id 를 요구한다
+      (RuntimeError: When there are multiple pending interrupts...).
+      LLM 이 ask_user 를 병렬로 두 번 부르면 실제로 이 상태가 되고, 그때
+      Command(resume=값) 만 보내면 실행이 통째로 죽는다(실측: test_action 3/3 재현).
+      그래서 id 가 2개 이상 넘어오면 {id: 값} 맵으로 만들어 전부 같은 답을 준다 —
+      우리 규격상 BE 는 질문 하나에 대한 답만 보내오므로, 남은 interrupt 를 그대로
+      두면 재개가 영영 안 끝난다.
     """
     if kind == "question":
+        if interrupt_ids and len(interrupt_ids) > 1:
+            return Command(resume={iid: answer for iid in interrupt_ids})
         return Command(resume=answer)
 
     if decision == "APPROVED":
@@ -286,7 +308,8 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
                     yield sse.step(_step_text(tc["name"]))
                 # ③ 최종 답 후보 (도구 호출 없는 AI 텍스트)
                 if getattr(msg, "type", "") == "ai" and not getattr(msg, "tool_calls", None):
-                    final_text = msg.text if isinstance(msg.text, str) else msg.content
+                    text = msg.text if isinstance(msg.text, str) else msg.content
+                    final_text = _strip_banned_prefix(text) if isinstance(text, str) else text
 
     # ④ 완주 — 단독 실행이면 done 을 내보내고, 복합 실행의 중간 작업이면
     #    sink 로 결과만 전달한다 (done 은 복합 실행기가 마지막에 한 번).
