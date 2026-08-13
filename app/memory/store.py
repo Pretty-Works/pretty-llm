@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import aiosqlite
 from pathlib import Path
 
@@ -82,10 +83,26 @@ async def resolve_user_id(run_id: str) -> int:
 
     ★ 신원 불변식: 이 함수 밖의 경로로 userId 를 구하지 말 것.
       LLM 인자·요청 바디의 신원은 신뢰하지 않는다 (사칭 차단).
+
+    ★ 8/13 추가 — 대화 요약(summarize_run)이 done 직전에 이 함수를 부르는데,
+      그 타이밍에 BE 가 run 을 이미 "끝난 것"으로 취급해 /me 를 4xx 로 거절하는
+      사례가 실사용에서 발견됐다(대화 제목이 요약 대신 첫 질문으로 계속 폴백).
+      원인은 BE 쪽 타이밍이라 근본 해결은 BE 협의가 필요하지만, 짧은 간격을 두고
+      한 번만 다시 물어보면 통과하는 경우가 많아 완화책으로 재시도를 둔다.
     """
     if run_id not in _user_cache:
-        me = await backend.get("/me", run_id=run_id)
-        _user_cache[run_id] = me["userId"]
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                me = await backend.get("/me", run_id=run_id)
+                _user_cache[run_id] = me["userId"]
+                break
+            except Exception as exc:                      # noqa: BLE001
+                last_exc = exc
+                if attempt == 0:
+                    await asyncio.sleep(0.3)
+        else:
+            raise last_exc
     return _user_cache[run_id]
 
 
