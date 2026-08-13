@@ -111,6 +111,14 @@ async def propose_replan_scenarios(query: str, project_id: int | None = None,
     tradeoff: TradeoffResult = await run_tradeoff(scenarios_result)
 
     by_id = {c.scenario_type: c for c in tradeoff.comparisons}
+    # ★ 8/13 추가 — SynthesisResult.actions(what/who/when/why, 사람이 읽는 구체적
+    #   변경 행동)는 ReplanScenario(BE 전송용, operations 는 ID 기반이라 사람이 못
+    #   읽는다)로 옮기는 과정에서 지금까지 통째로 버려졌다. 그 결과 LLM 이 "무엇이
+    #   바뀌는지"를 사용자에게 설명할 재료가 한 줄짜리 summary 뿐이었다 — 3안 선택
+    #   질문의 옵션 설명에도, 반영 완료 후 안내에도 구체성이 없었던 원인이 이거다.
+    #   BE 로 보낼 필요는 없으니 ReplanScenario 모델에는 안 넣고, _render() 텍스트에만
+    #   scenario_id 로 매칭해 실어 LLM 이 참고하게 한다.
+    actions_by_id = {s.scenario_id: s.actions for s in scenarios_result}
     scenarios: list[ReplanScenario] = []
     # ★ 8/12 추가 — 이전엔 여기서 제외된 안을 서버 로그에만 남기고 조용히 지웠다.
     #   그러면 3안을 만들어도 1~2안만 사용자에게 보이는데, LLM 도 사용자도 왜
@@ -146,7 +154,7 @@ async def propose_replan_scenarios(query: str, project_id: int | None = None,
 
     log.info("replan 분석 완료: projectId=%s scenarios=%s dropped=%s",
              resolved_project_id, [s.scenarioType for s in scenarios], dropped)
-    return _render(resolved_project_id, scenarios, tradeoff, dropped)
+    return _render(resolved_project_id, scenarios, tradeoff, dropped, actions_by_id)
 
 
 @tool
@@ -195,12 +203,30 @@ async def replan_apply(replanId: int, projectId: int, scenarioType: str,
     ctx = runtime.context
     args = {"projectId": projectId, "replanId": replanId, "scenarioType": scenarioType}
     try:
-        await execute_write("replan_apply", args, ctx)
+        result = await execute_write("replan_apply", args, ctx)
     except WriteRejectedError as e:
         return str(e)
 
     label = SCENARIO_LABELS.get(scenarioType, scenarioType)
-    return f"'{label}' 방안으로 반영했습니다."
+    # ★ 8/13 추가 — BE 응답(반영 건수)을 지금까지 버리고 있었다. execute_write()
+    #   결과를 그냥 무시한 채 "반영했습니다"라고만 답해서, 실제로 뭐가 몇 건
+    #   바뀌었는지 LLM 도 사용자도 확인할 길이 없었다. 건수를 문구로 풀어
+    #   돌려준다 — LLM 이 이걸 그대로 최종 답변에 옮겨 "무엇이 바뀌었는지"를
+    #   구체적으로 말할 수 있게 한다. (BE 가 필드를 안 주면 0건으로 조용히
+    #   넘어간다 — 필드명이 안 맞아 죽는 것보단 낫다.)
+    counts = {
+        "마일스톤 목표일 변경": (result or {}).get("milestoneDateChangedCount", 0),
+        "작업 마감일 변경": (result or {}).get("taskDueDateChangedCount", 0),
+        "작업 신규 생성": (result or {}).get("taskCreatedCount", 0),
+        "작업 삭제": (result or {}).get("taskDeletedCount", 0),
+        "인원 추가": (result or {}).get("memberAddedCount", 0),
+    }
+    changed = [f"{k} {v}건" for k, v in counts.items() if v]
+    detail = f" ({', '.join(changed)})" if changed else ""
+    return (f"'{label}' 방안으로 반영했습니다{detail}. 앞서 propose_replan_scenarios "
+            "결과에 나온 이 안의 '구체적 변경 내용'(누가·무엇을·언제)을 바탕으로 "
+            "실제로 무엇이 바뀌었는지 사용자에게 구체적으로 설명하라 — "
+            "'반영했습니다' 한 줄로 끝내지 마라.")
 
 
 # ─── 렌더 / 헬퍼 ────────────────────────────────────────────────
@@ -215,10 +241,17 @@ def _risk(risk_ko_or_en: str) -> str:
 
 
 def _render(project_id: int, scenarios: list[ReplanScenario], tradeoff: TradeoffResult,
-           dropped: list[str] | None = None) -> str:
+           dropped: list[str] | None = None,
+           actions_by_id: dict[str, list] | None = None) -> str:
     """LLM 이 읽을 결과 텍스트. replan_save 인자로 그대로 옮겨 적어야 하므로
     operations 까지 전부 펼쳐 보여준다(예전엔 replanId 만 노출했지만, 이제 저장
-    자체를 LLM 이 도구 인자로 채워야 해서 숨길 수 없다)."""
+    자체를 LLM 이 도구 인자로 채워야 해서 숨길 수 없다).
+
+    ★ 8/13 추가 — operations 는 taskId/memberId 같은 숫자 ID 라 사람이 못 읽는다.
+      "무엇이 바뀌는지" 사용자에게 설명할 재료로, synthesis 가 만든 사람이 읽는
+      행동 단위(actions: what/who/when/why)를 scenario_id 로 매칭해 같이 보여준다.
+      이 정보는 replan_save 로 보낼 필요 없다(BE 계약에 없음) — LLM 이 3안 설명·
+      반영 완료 안내에 쓰라고 텍스트로만 얹는다."""
     rec = tradeoff.recommended_scenario
     rec_label = SCENARIO_LABELS.get(rec, rec)
     lines = [f"[projectId={project_id}]",
@@ -228,7 +261,15 @@ def _render(project_id: int, scenarios: list[ReplanScenario], tradeoff: Tradeoff
         tag = " (추천)" if sc.scenarioType == rec else ""
         lines.append(f"{i}) scenarioType={sc.scenarioType} — {label}{tag} risk={sc.risk}")
         lines.append(f"   summary: {sc.summary}")
-        lines.append("   operations:")
+        actions = (actions_by_id or {}).get(sc.scenarioType) or []
+        if actions:
+            lines.append("   구체적 변경 내용(사람이 읽는 설명 — option_details·반영 완료"
+                         " 안내에 이 문구를 활용하라):")
+            for a in actions:
+                who = f" 담당: {a.who}" if getattr(a, "who", None) else ""
+                when = f" 시점: {a.when}" if getattr(a, "when", None) else ""
+                lines.append(f"     - {a.what}{who}{when}")
+        lines.append("   operations(BE 반영용 원자료 — ID 기반, 사용자에게 그대로 읽어주지 말 것):")
         for op in sc.operations:
             lines.append(f"     - {op.model_dump(mode='json', by_alias=True, exclude_none=True)}")
     if tradeoff.tradeoffs:
