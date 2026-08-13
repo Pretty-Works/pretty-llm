@@ -56,6 +56,22 @@ log = get_logger("clients.gmail_mcp_client")
 _RUN_ID_FIELD = "run_id"
 
 
+def _describe_exception(exc: BaseException, *, _depth: int = 0) -> str:
+    """(Base)ExceptionGroup(anyio TaskGroup 에러 묶음)은 str()이 "unhandled errors
+    in a TaskGroup (N sub-exceptions)"처럼 껍데기 요약만 준다 — 진짜 원인(연결
+    거부·DNS 실패·421 Host 헤더 거부 등)은 .exceptions 안의 실제 예외에 있는데
+    거기까지 안 펼치면 로그로는 원인을 못 찾는다(2026-08-13 실제로 겪음). 재귀로
+    펼쳐서 타입+메시지를 이어붙인다 — TaskGroup 안에 TaskGroup이 또 있을 수 있어서
+    depth 제한을 둔다."""
+    prefix = "  " * _depth
+    line = f"{prefix}{type(exc).__name__}: {exc}"
+    sub_exceptions = getattr(exc, "exceptions", None)  # ExceptionGroup / BaseExceptionGroup 전용 속성
+    if not sub_exceptions or _depth >= 5:
+        return line
+    children = "\n".join(_describe_exception(e, _depth=_depth + 1) for e in sub_exceptions)
+    return f"{line}\n{children}"
+
+
 @lru_cache(maxsize=1)
 def _client() -> MultiServerMCPClient:
     settings = get_settings()
@@ -154,7 +170,10 @@ async def get_gmail_tools() -> list:
     try:
         raw_tools = await _client().get_tools(server_name="gmail")
     except Exception as exc:  # noqa: BLE001 — MCP 서버 다운 등 어떤 이유든 폴백
-        log.warning("gmail MCP 서버 연결 실패, gmail 툴 없이 진행: %s", exc)
+        log.warning(
+            "gmail MCP 서버 연결 실패, gmail 툴 없이 진행:\n%s",
+            _describe_exception(exc),
+        )
         return []
 
     locked = [_lock_run_id(t) for t in raw_tools]

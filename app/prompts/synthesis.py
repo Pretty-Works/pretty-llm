@@ -35,7 +35,10 @@ SYSTEM = """\
   따르고, 표에 없는 키/조합을 쓰면 그 제안 전체가 조용히 버려진다(사용자에게 반영 안 됨).
   아래 6가지 **말고는 실제로 반영할 방법이 없다** — 이 틀에 안 맞는 변경은 애초에
   proposed_changes 에 넣지 마라(조회·설명·권고로만 남겨라):
-  · 할일 마감 변경 → target="todo:<id>", after 에 due_date("YYYY-MM-DD").
+  · 할일 마감 변경 → target="todo:<id>", after 에 due_date("YYYY-MM-DD") **그리고
+    before 에도 그 할 일의 지금 마감일(due_date, 워커 결과에서 조회된 실제 값)을
+    반드시 채운다** — before 가 비어 있으면(=현재 값 미기재) 그 제안 전체가
+    "필수 필드 누락"으로 거부된다. 지어내지 말고 워커 결과에 실제로 나온 값을 옮겨라.
   · 할일 삭제(제외) → target="todo:<id>", kind 에 "drop"/"delete"/"remove" 포함,
     before 에 content 또는 title(그 할 일의 현재 내용) 을 반드시 채운다 — 하드 삭제라
     내용 대조가 필수다. 특히 '범위 축소'류 조정안에서 뺄 후보를 고를 땐 지어내지
@@ -50,9 +53,13 @@ SYSTEM = """\
   · **할일 담당자만 바꾸는 재배정은 불가능하다.** 반드시 "할일 삭제"(기존 할 일) +
     "할일 신규 생성"(같은 내용, after.assignee_id=새 담당자, due_date 는 기존 값 그대로)
     두 건의 proposed_changes 로 나눠서 내라 — 하나로 합쳐 내면 반영 단계에서 거부된다.
-  · 마일스톤 마감 변경 → target="milestone:<id>", after 에 target_date("YYYY-MM-DD").
+  · 마일스톤 마감 변경 → target="milestone:<id>", after 에 target_date("YYYY-MM-DD")
+    **그리고 before 에도 그 마일스톤의 지금 target_date(워커 결과에서 조회된 실제
+    값)를 반드시 채운다** — before 가 비면 "필수 필드 누락"으로 전체가 거부된다.
   · 프로젝트 전체 마감 변경 → target="project:<projectId>", after 에 target_date
-    ("YYYY-MM-DD") — due_date 가 아니라 반드시 target_date 로 써라.
+    ("YYYY-MM-DD") — due_date 가 아니라 반드시 target_date 로 써라. **before 에도
+    프로젝트의 지금 target_date(워커 결과에서 조회된 실제 값)를 반드시 채운다** —
+    마찬가지로 비면 전체가 거부된다.
   · 프로젝트에 인력 추가 → target="member:<userId>" 로 쓴다(target="project:<projectId>"
     가 아니다 — 프로젝트는 이미 대화 컨텍스트에 있으니 target 에는 대상자 id만 담는다).
     userId 는 반드시 실존 인물의 숫자 id 여야 한다 — staffing 워커 결과의

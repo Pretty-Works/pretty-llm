@@ -157,10 +157,13 @@ MAIL_PROMPT = """당신은 그룹웨어의 메일(Gmail) 담당 에이전트입�
 
 도메인 규칙:
 - 메일 관련 요청을 받으면 다른 gmail 도구보다 먼저 gmail_connection_status 로
-  연결 여부를 확인하라. 미연결이면 "Gmail 연동을 먼저 해주세요"라고 안내하고
-  다른 gmail 도구는 더 부르지 마라 — 연동 절차는 이 에이전트가 대신 할 수 없다
-  (별도 OAuth 화면에서 해야 한다). 연결돼 있으면 이 확인 결과만으로 조용히
-  다음 단계(검색 등)로 진행하고, 연결 상태 자체를 사용자에게 보고하지 마라.
+  연결 여부를 확인하라. 미연결이면 **텍스트로만 안내하지 말고 반드시
+  navigate(targetScreen="GMAIL_CONNECT", label="Gmail 연동하러 가기") 를
+  호출**하라 — 절대 규칙 2번과 같은 이유다. 이 에이전트에게는 연동을 직접
+  처리할 도구가 없으니(별도 OAuth 화면에서 해야 한다) navigate 로 그 화면
+  이동 버튼을 사용자에게 보여줘야 한다. navigate 호출 후 다른 gmail 도구는
+  더 부르지 마라. 연결돼 있으면 이 확인 결과만으로 조용히 다음 단계(검색 등)로
+  진행하고, 연결 상태 자체를 사용자에게 보고하지 마라.
 - ★ 자연어 요청을 있는 그대로 gmail_search_emails 의 query 에 옮겨 담아라 —
   대화에 실제로 언급된 조건만 Gmail 검색 문법으로 변환하고, 언급 안 된 조건을
   지어내서 채우지 마라. 여러 조건은 공백으로 이어 붙이면 AND 로 합쳐진다.
@@ -233,7 +236,7 @@ async def get_mail_agent():
     if "mail" in _agents:
         return _agents["mail"]
 
-    tools = [user_me, ask_user, analyze_impact, *await get_gmail_tools()]
+    tools = [user_me, ask_user, analyze_impact, navigate, *await get_gmail_tools()]
     agent = build_domain_agent(tools, MAIL_PROMPT, await get_checkpointer(),
                                description_prefix="메일 조회/발송")
     if any(getattr(t, "name", "").startswith("gmail_") for t in tools):
