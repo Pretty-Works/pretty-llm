@@ -255,9 +255,11 @@ def _log_usage(component: str, message: BaseMessage) -> None:
     _total.add(message)
     usage = getattr(message, "usage_metadata", None)
     if usage:
+        # ★ 2026-08-13 — total_tokens 추가. TPM 한도(429 원인)는 in+out 합계로
+        #   깎이므로, 호출 하나가 한도에 얼마나 부담을 주는지 보려면 합계가 필요하다.
+        in_tok, out_tok = usage.get("input_tokens") or 0, usage.get("output_tokens") or 0
         log.info(
-            "[%s] tokens in=%s out=%s",
-            component,
-            usage.get("input_tokens"),
-            usage.get("output_tokens"),
+            "[%s] tokens in=%s out=%s total=%s (누적 calls=%s total=%s)",
+            component, in_tok, out_tok, in_tok + out_tok,
+            _total.calls, _total.input_tokens + _total.output_tokens,
         )

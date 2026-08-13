@@ -46,7 +46,22 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.0
     llm_timeout: int = 60
     llm_timeout_s: float = 30.0    # dependencies.py 의 httpx 타임아웃
-    llm_max_retries: int = 2
+    # ★ 2026-08-13 — 2 → 5. 동시 사용자가 늘며 gpt-4o-mini TPM 한도(Tier1: 200,000)를
+    #   넘겨 429(RateLimitError)가 나는 사례가 늘었다. openai SDK는 max_retries>0이면
+    #   429/일시 장애를 자체적으로 지수 백오프(+지터)로 재시도한다 — 우리가 배포한
+    #   시간·횟수를 직접 계산하지 않아도 SDK가 Retry-After 헤더를 우선 따르고, 없으면
+    #   지수 증가(대략 1s→2s→4s...)로 늘려가며 재시도한다. get_llm()(engine_b)과
+    #   build_domain_agent()(engine_a) 둘 다 이 값을 쓴다 — 예전엔 engine_a 쪽엔 아예
+    #   이 설정이 안 넘어가고 있었다(429 traceback이 전부 engine_a 경로였던 이유).
+    llm_max_retries: int = 5
+    # ★ 2026-08-13 추가 — 동시에 실행되는 Agent Run(사용자 요청 1건 = 그래프 1회
+    #   완주) 수를 이 값으로 제한한다(app/common/hitl.py의 _drive()). Run 하나가
+    #   LangGraph 안에서 OpenAI를 여러 번(도구 호출마다) 부를 수 있으므로, 이 값은
+    #   "동시 사용자 수"가 아니라 "동시에 OpenAI를 두드릴 수 있는 실행 흐름 수"에
+    #   가깝다 — 그래서 사용자 수보다 낮게 잡는다. 인스턴스가 여러 개로 늘어나면
+    #   프로세스별 Semaphore로는 전체 동시성을 못 막으므로 Redis 등 전역 rate
+    #   limiter가 필요하다(별도 검토 필요 — 지금은 단일 인스턴스 기준).
+    agent_concurrency_limit: int = 3
 
     # ─── 백엔드 연동 (내부 도구 API = /api/internal/agent/**) ─────
     backend_base_url: str = "http://localhost:3001"   # Spring BE

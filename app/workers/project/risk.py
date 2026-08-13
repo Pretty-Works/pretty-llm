@@ -1,12 +1,21 @@
 # app/workers/project/risk.py
 """project / risk 워커 — 목표 달성을 막을 구체적 위험.
 
-★ gmail 읽기 도구(async_tools=get_gmail_read_tools) — priority 워커와 같은
-이유(app/workers/project/priority.py 참고)로 붙였다. 지연·블로커·외부 의존
+★ gmail 읽기 도구(async_tool_providers=(get_gmail_read_tools,)) — priority 워커와
+같은 이유(app/workers/project/priority.py 참고)로 붙였다. 지연·블로커·외부 의존
 신호는 내부 API 데이터보다 이메일에 먼저 드러나는 경우가 많아서(예: 외주사가
 일정 지연을 메일로 먼저 알리는 경우) risk 축에도 자연스러운 근거원이다.
 읽기 전용만 — get_gmail_read_tools() 가 gmail_send_email 을 애초에 안 돌려주고,
-run_tool_loop() 이 한 번 더 막는다(app/common/llm_client.py 참고)."""
+run_tool_loop() 이 한 번 더 막는다(app/common/llm_client.py 참고).
+
+★ 2026-08-13 수정 — WorkerSpec(app/workers/base.py)의 실제 필드명은
+  async_tool_providers(0-인자 async 콜러블의 "튜플")인데, 이 파일은 존재하지
+  않는 async_tools(콜러블 단일값)로 넘기고 있었다. dataclass가 모르는 키워드라
+  SPEC 생성 시점(모듈 import 시점)에 그대로 TypeError로 죽었고, 이 SPEC이
+  workers/registry.py의 _REGISTRY 조립에 쓰이기 때문에 project/hcm/me/meeting/
+  vacation 등 workers.registry 를 거치는 요청 전부가 이 import 실패로 영향을
+  받을 수 있었다(FastAPI 500). priority.py 가 이미 쓰던 올바른 문법
+  (async_tool_providers=(...) — 튜플)으로 맞췄다."""
 
 from typing import Literal
 
@@ -57,6 +66,6 @@ SPEC = WorkerSpec(
     # 내부 조회 도구를 뺐다 — 이 축은 조사하지 않는다. 컨텍스트에 이미 계산되어
     # 들어온 사실만 조합한다. 도구를 주면 다른 축이 보는 것을 또 보게 된다.
     tools=(),
-    async_tools=get_gmail_read_tools,
+    async_tool_providers=(get_gmail_read_tools,),
     context_sections=("project", "milestones", "todos", "members", "meetings", "budget", "leaves", "workload"),
 )

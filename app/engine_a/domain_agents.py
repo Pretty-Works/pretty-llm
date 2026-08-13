@@ -63,8 +63,21 @@ def build_domain_agent(tools: list, domain_prompt: str, checkpointer,
 
     # temperature 를 안 넘기면 provider 기본값으로 돌아 같은 질문에도 도구 선택이
     # 흔들린다 (실측: 동일 입력 5회에 응답 2가지). 라우팅·도구 선택은 결정적이어야 한다.
+    #
+    # ★ 2026-08-13 추가 — max_retries·timeout 이 지금까지 여기(engine_a)엔 안 넘어가고
+    #   있었다(provider SDK 기본값 그대로 — 재시도가 거의 없거나 짧다). engine_b 의
+    #   get_llm()(app/common/llm_client.py)은 처음부터 이 두 값을 settings 에서
+    #   받아 왔는데, engine_a 의 도메인 에이전트(할일·일정·지출·메일·재계획·회의·
+    #   휴가·연차 전부 이 build_domain_agent 를 거친다)만 빠져 있었다 — 동시 사용자가
+    #   늘며 보고된 429(RateLimitError) traceback이 전부 "agent.astream() → LangGraph
+    #   → OpenAI" 경로였던 이유가 이거였다. max_retries>0 이면 openai SDK 가 429/5xx를
+    #   지수 백오프(+지터)로 자동 재시도한다 — Run 을 처음부터 다시 돌리는 게
+    #   아니라 실패한 그 HTTP 호출 한 번만 재시도되므로, 이미 실행된 Tool·HITL
+    #   처리가 중복되지 않는다.
     model = init_chat_model(settings.llm_model, model_provider=settings.llm_provider,
-                                temperature=settings.llm_temperature)
+                                temperature=settings.llm_temperature,
+                                max_retries=settings.llm_max_retries,
+                                timeout=settings.llm_timeout)
     return create_agent(
         model,
         tools=tools,

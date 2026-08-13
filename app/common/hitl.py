@@ -89,12 +89,30 @@ def _shape(result: dict, thread_id: str) -> dict:
 #  예외 처리는 여기서 하지 않는다 — api 층이 감싸서 error 이벤트를 보장한다.
 # ═══════════════════════════════════════════════════════════
 
+import asyncio
+import time
 import re
 from collections.abc import AsyncIterator
 
 from app.common import sse
 from app.common.run_context import current_run_id
+from app.config import get_settings
 from app.tools.registry import WRITE_TOOLS, RunContext, build_request, catalog_name, is_mcp_write
+from app.utils.logger import get_logger
+
+log = get_logger("common.hitl")
+
+# ★ 2026-08-13 추가 — 동시 사용자가 늘면서 gpt-4o-mini TPM 한도(Tier1: 200,000)를
+#   넘겨 429(RateLimitError)가 나는 사례가 늘었다. Run 하나가 LangGraph 안에서
+#   OpenAI 를 여러 번(도구 호출마다) 부를 수 있어 "동시 사용자 수"와 "동시 OpenAI
+#   호출량"이 비례하지 않으므로, 사용자 요청 건수가 아니라 "동시에 실행 중인 Run
+#   수"를 이 세마포어로 제한한다. engine_a 의 모든 도메인 에이전트(할일·일정·
+#   지출·메일·재계획·회의·휴가 등)와, 그 안에서 analyze_impact 로 불리는 engine_b
+#   까지 전부 결국 이 함수(_drive)를 거치므로 여기 한 곳이면 전체 Run 이 걸린다.
+#   ★ 프로세스 전역(모듈 레벨) 세마포어라 인스턴스 1개 기준이다. 여러 인스턴스/
+#   컨테이너로 늘어나면 프로세스별 세마포어만으론 전체 동시성을 못 막으므로,
+#   그때는 Redis 등 전역 rate limiter 로 바꿔야 한다(별도 검토 필요).
+_AGENT_SEMAPHORE = asyncio.Semaphore(get_settings().agent_concurrency_limit)
 
 # ★ 8/13 추가 — COMMON_RULES 가 "작업 완료 보고:" 로 시작하지 말라고 명시적으로
 #   금지했는데도(그 문구가 규칙의 "잘못" 예시 그 자체) 실사용에서 그대로 나온
@@ -262,6 +280,12 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
     tool_call_ids: dict[str, str] = {}      # 도구 이름 → tool_call id (interrupt 대조용)
     seen_calls: set[str] = set()            # 미들웨어가 같은 메시지를 재방출하므로 중복 제거
     final_text = ""
+    # ★ 2026-08-13 추가 — 이 Run 이 실제로 OpenAI 를 몇 번 불렀고 토큰을 얼마나
+    #   썼는지. "사용자 요청 1건당 실제 호출 횟수·토큰"을 알아야 TPM 한도(429 원인)
+    #   대비 실제 부담을 가늠할 수 있다 — 도구 호출이 반복되는 흐름은 겉보기
+    #   요청 1건이 LLM 호출 여러 번으로 불어난다.
+    llm_calls = 0
+    tokens_in = tokens_out = 0
 
     # gmail_mcp_client._lock_run_id() 가 감싼 도구들은 RunContext(context=ctx)가
     # 아니라 이 contextvar 로 run_id 를 읽는다(engine_b/runner.py 와 동일 패턴).
@@ -271,6 +295,101 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
     # 세그먼트(stream_command)도 같은 _drive() 를 타므로 여기 한 곳이면 충분하다.
     current_run_id.set(run_id)
 
+    # ★ 2026-08-13 추가 — 동시 실행 수 제한(_AGENT_SEMAPHORE, 모듈 상단 참고).
+    #   대기가 있었으면(큐가 밀렸다는 뜻) 로그로 남긴다 — 평소엔 즉시 획득되므로
+    #   0.05s 문턱값 이하는 로그를 안 남겨 소음을 줄인다. astream 루프 전체와
+    #   summarize_run()(마지막 LLM 호출 1번)까지 세마포어를 쥔 채로 진행한다 —
+    #   OpenAI 를 실제로 두드리는 구간 전부를 덮어야 의미가 있다. 중간에 interrupt
+    #   로 return 하거나 클라이언트가 스트림을 끊어도(GeneratorExit) `async with`
+    #   가 세마포어를 정상 반납한다.
+    wait_start = time.monotonic()
+    async with _AGENT_SEMAPHORE:
+        waited = time.monotonic() - wait_start
+        if waited > 0.05:
+            log.info("[%s/%s] run_id=%s 동시 실행 한도(%d)로 %.2fs 대기 후 시작",
+                     route, domain, run_id, get_settings().agent_concurrency_limit, waited)
+
+        # "custom" 을 같이 구독하는 이유: 오래 걸리는 도구(analyze_impact 의 엔진 B)가
+        # 실행 도중 runtime.stream_writer 로 밀어 넣는 진행상황을 step 으로 중계해야
+        # 90초 무이벤트 차단(규격)에 안 걸린다.
+        async for mode, chunk in agent.astream(agent_input, config=config, context=ctx,
+                                               stream_mode=["updates", "custom"]):
+            if mode == "custom":
+                text = chunk.get("text") if isinstance(chunk, dict) else str(chunk)
+                if text:
+                    yield sse.step(str(text)[:100])
+                continue
+
+            update = chunk
+            # ① 멈춤 — 무엇이 멈췄는지에 따라 이벤트가 갈린다. 스트림은 둘 다 닫는다.
+            #    · 미들웨어가 쓰기 도구를 가로챔  → approval_request
+            #    · ask_user 가 스스로 interrupt() → question
+            #    멈춘 위치는 checkpointer 가 이미 저장했다 (runId 로 복원 가능).
+            if "__interrupt__" in update:
+                value = update["__interrupt__"][0].value
+                if isinstance(value, dict) and value.get("kind") == "question":
+                    payload = {k: v for k, v in value.items() if k != "kind"}
+                    yield sse.sse_event("question", payload)
+                else:
+                    payload = await _approval_payload(update["__interrupt__"], tool_call_ids, run_id)
+                    yield sse.sse_event("approval_request", payload)
+                return
+
+            for node_output in update.values():
+                for msg in (node_output or {}).get("messages", []):
+                    # ② 모델이 도구 호출을 결정 → step
+                    for tc in getattr(msg, "tool_calls", None) or []:
+                        if tc["id"] in seen_calls:
+                            continue
+                        seen_calls.add(tc["id"])
+                        tool_call_ids[tc["name"]] = tc["id"]
+                        yield sse.step(_step_text(tc["name"]))
+                    # ②-1 토큰 사용량 — AIMessage 에 usage_metadata 가 실려 오면
+                    #   (일반 응답이든 도구 호출 응답이든) 그때마다 실제 OpenAI 호출
+                    #   1회로 센다. engine_b(llm_client.py) 는 이미 자체적으로 이
+                    #   로그를 남기므로, 여기는 engine_a 경로(이전엔 로깅이 아예
+                    #   없었다)를 채운다.
+                    usage = getattr(msg, "usage_metadata", None)
+                    if usage:
+                        llm_calls += 1
+                        c_in = int(usage.get("input_tokens") or 0)
+                        c_out = int(usage.get("output_tokens") or 0)
+                        tokens_in += c_in
+                        tokens_out += c_out
+                        log.info(
+                            "[%s/%s] run_id=%s LLM 호출 #%d tokens in=%s out=%s total=%s",
+                            route, domain, run_id, llm_calls, c_in, c_out, c_in + c_out,
+                        )
+                    # ③ 최종 답 후보 (도구 호출 없는 AI 텍스트)
+                    if getattr(msg, "type", "") == "ai" and not getattr(msg, "tool_calls", None):
+                        final_text = msg.text if isinstance(msg.text, str) else msg.content
+
+        if llm_calls:
+            log.info(
+                "[%s/%s] run_id=%s 완료 — LLM 호출 %d회 tokens in=%s out=%s total=%s",
+                route, domain, run_id, llm_calls, tokens_in, tokens_out, tokens_in + tokens_out,
+            )
+
+        # ④ 완주 — 단독 실행이면 done 을 내보내고, 복합 실행의 중간 작업이면
+        #    sink 로 결과만 전달한다 (done 은 복합 실행기가 마지막에 한 번).
+        #    action 은 도구가 RunContext 에 기록해 둔 것 (meeting_create·navigate·fill_form).
+        if result_sink is not None:
+            result_sink["answer"] = final_text
+            result_sink["action"] = ctx.action
+            result_sink["completed"] = True
+        if emit_done:
+            # ★ 8/12 변경 — 채팅 목록 제목(BE GET /agent/conversations 의 title)에
+            #   쓸 값을 done 바디에 실어야 해서, 더 이상 fire()(발사 후 망각)가 아니라
+            #   done 을 내보내기 "전에" await 한다. LLM 호출 1번만큼 지연이 늘지만,
+            #   그래야 BE 가 title 을 그대로 저장할 수 있다(자세한 이유는
+            #   app/memory/summarize.py 모듈 docstring). 실패해도 None 이라 done 자체는
+            #   막지 않는다 — 이때는 title 필드를 아예 안 실어 BE 가 첫 질문으로 폴백한다.
+            from app.memory.summarize import summarize_run
+            title = await summarize_run(ctx.run_id, ctx.conversation_id, ctx.goal or "", final_text)
+            done_payload = {"answer": final_text, "action": ctx.action}
+            if title:
+                done_payload["title"] = title
+            yield sse.sse_event("done", done_payload)
     # "custom" 을 같이 구독하는 이유: 오래 걸리는 도구(analyze_impact 의 엔진 B)가
     # 실행 도중 runtime.stream_writer 로 밀어 넣는 진행상황을 step 으로 중계해야
     # 90초 무이벤트 차단(규격)에 안 걸린다.
