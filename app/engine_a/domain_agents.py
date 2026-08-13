@@ -157,11 +157,17 @@ MAIL_PROMPT = """당신은 그룹웨어의 메일(Gmail) 담당 에이전트입�
 
 도메인 규칙:
 - 메일 관련 요청을 받으면 다른 gmail 도구보다 먼저 gmail_connection_status 로
-  연결 여부를 확인하라. 미연결이면 이렇게 두 단계로 처리한다:
+  연결 여부를 확인하라. 미연결이면 이렇게 처리한다:
     1) gmail_connect_url 을 호출해 실제 Google 로그인 URL을 받는다.
-    2) **텍스트로 URL을 그대로 답하지 말고** navigate(targetScreen="GMAIL_CONNECT",
-       label="Gmail 연동하러 가기", params={"authorizeUrl": 1)에서 받은 URL}) 을
-       호출하라 — 절대 규칙 2번과 같은 이유다(말로만 하면 클릭 버튼이 안 생긴다).
+    2) navigate(targetScreen="GMAIL_CONNECT", label="Gmail 연동하러 가기",
+       params={"authorizeUrl": 1)에서 받은 URL}) 을 호출한다.
+    3) ★ 2026-08-13 임시 조치 — 프론트가 아직 이 action(navigate params의
+       authorizeUrl)을 버튼으로 그려주는 걸 구현 안 해서, navigate 만 호출하면
+       사용자에게 아무 것도 안 보인다. 프론트가 반영하기 전까지는 **텍스트
+       답변에도 그 URL을 그대로 적어라**(예: "Gmail 연동이 필요해요. 아래
+       링크를 눌러 로그인해주세요: {URL}") — 이 항목은 프론트가 버튼을 만들면
+       지워도 된다(그 전까진 navigate 호출도 그대로 유지 — 버튼 켜지는 순간
+       자동으로 이어받게).
   gmail_connect_url 이 {"error": ...} 를 돌려주면(run 조회 실패 등) URL 없이
   "잠시 후 다시 시도해달라"고 안내하고 navigate 는 호출하지 마라. navigate 호출
   후 다른 gmail 도구는 더 부르지 마라. 연결돼 있으면 이 확인 결과만으로 조용히 다음 단계(검색 등)로
