@@ -52,7 +52,13 @@ class VacationWindowRecommendation(LenientModel):
 
 
 class VacationImpactResult(LenientModel):
-    requester_id: int = 0
+    requester_id: int = Field(
+        default=0,
+        description="이 휴가 영향 분석을 요청한 사람의 user_id다. 컨텍스트의 "
+                    "'요청자'(requester) id를 그대로 옮겨 적어라 — 프로젝트 참여자 "
+                    "명단에서 눈에 띄는 다른 사람의 id를 넣지 마라. 요청자가 누군지 "
+                    "컨텍스트에서 확인이 안 되면 0으로 비워 둔다(지어내지 말 것).",
+    )
     requested_start: str | None = None
     requested_end: str | None = None
     verdict: Literal["clear", "caution", "blocking"] = "clear"
