@@ -98,7 +98,7 @@ async def test_run_tool_loop_allows_read_only_tool_past_the_guard():
 
 # ─── 워커 배선 (priority, risk) ──────────────────────────────────────
 #
-# ★ cost(project)/skill_fit·workload(hcm)/meeting 어댑터는 의도적으로 안 붙였다
+# ★ cost·followup(project)/staffing(hcm)/meeting 어댑터는 의도적으로 안 붙였다
 #   — 이메일이 직접적인 근거가 될 축이 아니라서, 붙여봤자 도구 스키마만 늘고
 #   워커가 잘못 판단해 관련 없는 이메일을 뒤질 가능성만 약간 는다. 필요해지면
 #   priority/risk 와 완전히 같은 패턴(async_tools=get_gmail_read_tools 한 줄 +
@@ -131,15 +131,18 @@ def test_risk_prompt_explains_when_to_use_gmail():
 
 
 def test_other_project_and_domain_workers_do_not_have_gmail_yet():
-    """cost/skill_fit/workload/meeting 은 의도적으로 아직 안 붙였다 — 나중에
+    """cost/followup/staffing/meeting 은 의도적으로 아직 안 붙였다 — 나중에
     누가 실수로/의도치 않게 다른 워커 파일을 고쳐서 붙이는 건 상관없지만,
-    최소한 지금 시점의 의도(priority·risk 한정)를 회귀로 남겨둔다."""
-    from app.workers.hr.skill_fit import SPEC as skill_fit_spec
-    from app.workers.hr.workload import SPEC as workload_spec
-    from app.workers.meeting.adapter import SPEC as meeting_spec
-    from app.workers.project.cost import SPEC as cost_spec
+    최소한 지금 시점의 의도(priority·risk 한정)를 회귀로 남겨둔다.
 
-    for spec in (cost_spec, skill_fit_spec, workload_spec, meeting_spec):
+    ★ 2026-08-11 축 재편 — skill_fit·workload 가 staffing 으로 합쳐졌고 followup 이 생겼다.
+      레지스트리에서 훑으면 축이 바뀌어도 이 회귀가 따라온다.
+    """
+    from app.workers import registry
+
+    for spec in registry.all_specs():
+        if spec.dimension in {"priority", "risk"}:
+            continue
         assert spec.async_tools is None, f"{spec.node_name} 에 예상 밖의 async_tools"
 
 

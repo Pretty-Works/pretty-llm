@@ -103,8 +103,7 @@ _DIMENSION_NEEDS: dict[str, tuple[str, str]] = {
     "priority": ("projects", "대상 프로젝트"),
     "risk": ("projects", "대상 프로젝트"),
     "cost": ("budgets", "예산 정보"),
-    "skill_fit": ("candidates", "프로젝트 참여자"),
-    "workload": ("candidates", "프로젝트 참여자"),
+    "staffing": ("candidates", "프로젝트 참여자"),
     "my_week": ("my_week", "내 주간 정보"),
 }
 
@@ -114,6 +113,10 @@ def apply_data_gate(context: AnalysisContext) -> None:
     for dimension, (field, label) in _DIMENSION_NEEDS.items():
         if not getattr(context, field, None):
             context.skipped.append(f"{dimension}: {label}를 확보하지 못해 분석하지 않음")
+
+    # followup 은 회의록이 근거의 전부다. 회의록은 프로젝트 안에 있어 위 반복으로 못 잡는다.
+    if not any(p.meetings for p in context.projects):
+        context.skipped.append("followup: 회의록을 확보하지 못해 분석하지 않음")
 
     if context.projects and not any(p.milestones for p in context.projects):
         context.missing.append(
@@ -559,8 +562,9 @@ def render_context(
         if "meetings" in wanted and project.meetings:
             lines += ["", "### 최근 회의록 (하기로 한 것 대비 진행을 볼 때 쓴다)"]
             for meeting in project.meetings:
+                # id 를 반드시 낸다 — 없으면 followup 축이 회의 번호를 1, 2 로 지어낸다.
                 lines.append(
-                    f"- [{meeting.meeting_date or '날짜 미상'}] {meeting.title}"
+                    f"- meeting:{meeting.id} [{meeting.meeting_date or '날짜 미상'}] {meeting.title}"
                     + (f" — 목적: {meeting.purpose}" if meeting.purpose else "")
                 )
                 if meeting.content:

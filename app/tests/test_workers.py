@@ -11,7 +11,7 @@ from datetime import date
 
 from app.engine_b.context_builder import build_context, render_context
 from app.engine_b.validator import (
-    SKILL_FIT_CONFIDENCE_CAP,
+    STAFFING_CONFIDENCE_CAP,
     validate,
     validate_synthesis,
 )
@@ -24,7 +24,7 @@ from app.schemas.state import (
     WorkerOutput,
     merge_worker_outputs,
 )
-from app.tools import demo_data
+from app.tests.fixtures import demo_data
 from app.workers import registry
 
 AS_OF = date(2026, 7, 27)
@@ -129,7 +129,7 @@ async def test_후보군은_프로젝트_참여자를_넘지_않는다(project_p
     (`list_department_members` 무필터 호출). 그 경로로 프로젝트와 무관한 사람이
     후보군에 들어왔다. 이제 후보군은 프로젝트 참여자 + 질문에 이름이 나온 사람뿐이다.
     """
-    project_plan.focus = ["skill_fit"]          # 예전에 전사 조회를 촉발하던 조건
+    project_plan.focus = ["staffing"]          # 예전에 전사 조회를 촉발하던 조건
     context = await build_context(project_plan, request_p001)
 
     member_ids = {m.user_id for p in context.projects for m in p.members}
@@ -193,7 +193,7 @@ def test_라우터_프롬프트에_픽스처_값이_없다():
     이름을 다른 이름으로 바꾸는 건 방어가 아니다 — 이 테스트가 방어다.
     """
     from app.prompts import analysis_router
-    from app.tools import demo_data
+    from app.tests.fixtures import demo_data
 
     text = analysis_router.SYSTEM + analysis_router.build_few_shot_text()
     leaked = [u["name"] for u in demo_data.USERS if u["name"] in text]
@@ -210,6 +210,93 @@ def test_라우터_프롬프트가_예시값_사용을_금지한다():
     assert "entities 를 **비워 둔다**" in analysis_router.SYSTEM
 
 
+# ─── Validator - followup ─────────────────────────────────────────
+
+def test_회의록이_컨텍스트에_실린다(context_p001):
+    """BE 가 주는데 Engine B 가 안 쓰던 데이터 — 이제 근거로 쓴다."""
+    project = context_p001.project(1001)
+
+    assert len(project.meetings) == 2
+    assert any(m.follow_up for m in project.meetings), "후속 조치가 비어 있으면 followup 축이 못 돈다"
+
+    text = render_context(context_p001, ("meetings",))
+    assert "최근 회의록" in text and "후속 조치" in text
+    # id 가 안 보이면 followup 축이 회의 번호를 지어낸다 (실제로 1, 2 로 지어냈다)
+    assert "meeting:5001" in text
+
+
+def test_없는_할일에_후속조치를_연결하면_잡는다(context_p001):
+    output = _output(
+        "followup",
+        {"items": [{"what": "권한 매트릭스 재검토", "meeting_id": 5001,
+                    "status": "TRACKED", "matched_task_ids": [9999]}]},
+    )
+    report = validate([output], context_p001)
+
+    assert "UNKNOWN_TASK" in _codes(report)
+
+
+def test_후속조치_판정이_모순이면_잡는다(context_p001):
+    """UNTRACKED 인데 할 일이 연결돼 있으면 판정이 스스로 어긋난다."""
+    output = _output(
+        "followup",
+        {"items": [{"what": "결재선 화면 개편 마무리", "meeting_id": 5001,
+                    "status": "UNTRACKED", "matched_task_ids": [102]}]},
+    )
+    report = validate([output], context_p001)
+
+    assert "STATUS_CONFLICT" in _codes(report)
+
+
+def test_정상적인_후속조치_추적은_통과한다(context_p001):
+    output = _output(
+        "followup",
+        {
+            "summary": "회의 2건에서 실행 항목 3건, 그 중 미등록 1건",
+            "items": [
+                {"what": "결재선 화면 개편 마무리", "meeting_id": 5001,
+                 "status": "TRACKED", "matched_task_ids": [102]},
+                {"what": "권한 매트릭스 재검토", "meeting_id": 5001,
+                 "status": "UNTRACKED", "matched_task_ids": []},
+            ],
+            "tracked_count": 2,
+        },
+    )
+    report = validate([output], context_p001)
+
+    assert report.ok
+
+
+def test_프로덕션_코드는_픽스처를_임포트하지_않는다():
+    """★ 사고의 근본 원인 — 프로덕션 조회 경로가 픽스처로 폴백했다.
+
+    이제 픽스처는 app/tests/fixtures/ 에만 있고, 툴·엔진·워커는 그걸 모른다.
+    조회 실패는 빈 결과이고 호출부가 '확인 못 함'으로 처리한다.
+    """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    scanned = [
+        path
+        for folder in ("tools", "engine_b", "workers", "api", "orchestrator", "common")
+        for path in (root / folder).rglob("*.py")
+        # demo.py 는 수동 실행기라 픽스처 스텁을 의도적으로 쓴다 (main() 안에서 지연 임포트)
+        if path.name != "demo.py"
+    ]
+    assert scanned, "스캔 대상을 못 찾음"
+
+    # 주석·docstring 의 언급은 봐준다 — 막아야 하는 건 실제 임포트다.
+    import_pattern = re.compile(r"^\s*(from\s+\S*demo_data|from\s+\S+\s+import\s+.*demo_data|import\s+\S*demo_data)",
+                                re.MULTILINE)
+    offenders = [
+        str(path.relative_to(root))
+        for path in scanned
+        if import_pattern.search(path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, f"프로덕션 코드가 픽스처를 임포트한다: {offenders}"
+
+
 def test_데이터게이트가_근거없는_축을_건너뛴다():
     """근거가 없으면 워커를 돌리지 않는다 — 예전에는 '도구로 직접 찾아라'고 넘겼다."""
     from app.engine_b.context_builder import apply_data_gate, skipped_dimensions
@@ -218,7 +305,7 @@ def test_데이터게이트가_근거없는_축을_건너뛴다():
     apply_data_gate(context)
 
     assert skipped_dimensions(context) == {
-        "priority", "risk", "cost", "skill_fit", "workload", "my_week"
+        "priority", "risk", "cost", "followup", "staffing", "my_week"
     }
 
 
@@ -228,8 +315,8 @@ async def test_대상이_없으면_참여중인_프로젝트로_떨어진다(req
 
     context = await build_context(plan, request_p001)
 
-    # u001 은 p001, p003 참여 (p000 은 COMPLETED 라 제외)
-    assert {p.id for p in context.projects} == {1001, 1003}
+    # u001 은 p001, p003, p004 참여 (p000 은 COMPLETED 라 제외)
+    assert {p.id for p in context.projects} == {1001, 1003, 1004}
 
 
 def test_렌더링에_지연_표시가_들어간다(context_p001):
@@ -497,15 +584,15 @@ def test_정상적인_비용분석은_통과한다(context_p001):
     assert report.ok
 
 
-# ─── Validator - skill_fit ────────────────────────────────────────
+# ─── Validator - staffing (역할 매칭) ─────────────────────────────
 
 def _assignment(user_id: str, **overrides) -> dict:
-    """skill_fit 결과 1건. 점수·순위 필드는 없다 (2026-08-11 재설계)."""
+    """staffing 의 handoff 1건. 점수·순위 필드는 없다 (2026-08-11 재설계)."""
     base = {
-        "target": "todo:103",
-        "target_kind": "task",
+        "task_id": 103,
+        "from_user_id": 2,
         "work_type": "FE",
-        "matches": [
+        "candidates": [
             {
                 "user_id": user_id,
                 "name": "테스트",
@@ -521,15 +608,15 @@ def _assignment(user_id: str, **overrides) -> dict:
 def test_적합도_확신도_상한을_넘으면_잡는다(context_p001):
     """스킬 데이터가 없는 추론 축이라 구조적으로 확신할 수 없다."""
     output = _output(
-        "skill_fit",
-        {"assignments": [_assignment(3)]},
+        "staffing",
+        {"handoffs": [_assignment(3)]},
         domain="hcm",
         confidence=0.92,
     )
     report = validate([output], context_p001)
 
     assert "CONFIDENCE_CAP_EXCEEDED" in _codes(report)
-    assert str(SKILL_FIT_CONFIDENCE_CAP) in next(
+    assert str(STAFFING_CONFIDENCE_CAP) in next(
         v for v in report.errors if v.code == "CONFIDENCE_CAP_EXCEEDED"
     ).fix_hint
 
@@ -537,8 +624,8 @@ def test_적합도_확신도_상한을_넘으면_잡는다(context_p001):
 def test_부재를_밝히지_않으면_잡는다(context_p001):
     """u002 는 8/3~8/7 승인 휴가가 있다. 배제 사유가 아니라 밝혀야 할 사실이다."""
     output = _output(
-        "skill_fit",
-        {"assignments": [_assignment(2)]},
+        "staffing",
+        {"handoffs": [_assignment(2)]},
         domain="hcm",
         confidence=0.7,
     )
@@ -551,9 +638,9 @@ def test_부재를_밝히지_않으면_잡는다(context_p001):
 
 def test_부재를_note에_적으면_통과한다(context_p001):
     assignment = _assignment(2)
-    assignment["matches"][0]["note"] = "2026-08-03~2026-08-07 승인 휴가로 부재"
+    assignment["candidates"][0]["note"] = "2026-08-03~2026-08-07 승인 휴가로 부재"
     output = _output(
-        "skill_fit", {"assignments": [assignment]}, domain="hcm", confidence=0.7
+        "staffing", {"handoffs": [assignment]}, domain="hcm", confidence=0.7
     )
     report = validate([output], context_p001)
 
@@ -562,9 +649,9 @@ def test_부재를_note에_적으면_통과한다(context_p001):
 
 def test_근거가_비면_잡는다(context_p001):
     assignment = _assignment(3)
-    assignment["matches"][0]["basis"] = ""
+    assignment["candidates"][0]["basis"] = ""
     output = _output(
-        "skill_fit", {"assignments": [assignment]}, domain="hcm", confidence=0.7
+        "staffing", {"handoffs": [assignment]}, domain="hcm", confidence=0.7
     )
     report = validate([output], context_p001)
 
@@ -574,8 +661,8 @@ def test_근거가_비면_잡는다(context_p001):
 def test_후보군_밖의_사람을_제시하면_잡는다(context_p001):
     """후보군 표가 전부다. 전사 명부를 긁던 경로를 없앤 뒤의 마지막 방어선."""
     output = _output(
-        "skill_fit",
-        {"assignments": [_assignment(999)]},
+        "staffing",
+        {"handoffs": [_assignment(999)]},
         domain="hcm",
         confidence=0.7,
     )
@@ -586,8 +673,8 @@ def test_후보군_밖의_사람을_제시하면_잡는다(context_p001):
 
 def test_정상적인_역할_매칭은_통과한다(context_p001):
     output = _output(
-        "skill_fit",
-        {"assignments": [_assignment(3)]},
+        "staffing",
+        {"handoffs": [_assignment(3)]},
         domain="hcm",
         confidence=0.7,
     )
@@ -596,7 +683,7 @@ def test_정상적인_역할_매칭은_통과한다(context_p001):
     assert report.ok
 
 
-# ─── Validator - workload ─────────────────────────────────────────
+# ─── Validator - staffing (가용성 숫자) ───────────────────────────
 
 def _member_load(context, user_id: str, **overrides) -> dict:
     actual = next(w for w in context.workloads if w["user_id"] == user_id)
@@ -617,7 +704,7 @@ def _member_load(context, user_id: str, **overrides) -> dict:
 def test_부하지표를_바꿔_적으면_잡는다(context_p001):
     """코드가 센 값을 모델이 바꾸면 이후 판단이 전부 어긋난다."""
     output = _output(
-        "workload",
+        "staffing",
         {"members": [_member_load(context_p001, 2, overdue_count=0)]},
         domain="hcm",
     )
@@ -628,7 +715,7 @@ def test_부하지표를_바꿔_적으면_잡는다(context_p001):
 
 def test_지표를_그대로_인용하면_통과한다(context_p001):
     output = _output(
-        "workload",
+        "staffing",
         {"members": [_member_load(context_p001, 2)], "bottlenecks": [2]},
         domain="hcm",
     )
@@ -639,7 +726,7 @@ def test_지표를_그대로_인용하면_통과한다(context_p001):
 
 def test_휴가중인_사람에게_일을_넘기라고_하면_잡는다(context_p001):
     output = _output(
-        "workload",
+        "staffing",
         {
             "members": [_member_load(context_p001, 3)],
             "rebalance_hints": [
@@ -750,7 +837,7 @@ def test_도메인을_고르면_그_세트가_전부_실행대상이_된다():
     """focus 는 강조점일 뿐 실행 여부와 무관하다 - 설계 원칙."""
     specs = registry.specs_for_domains(["project"])
 
-    assert {s.dimension for s in specs} == {"priority", "risk", "cost"}
+    assert {s.dimension for s in specs} == {"priority", "risk", "cost", "followup"}
 
 
 def test_두_도메인을_고르면_다섯_워커가_돈다():
@@ -777,11 +864,11 @@ def test_meeting_도메인도_라우팅에_잡힌다():
 
 def test_축_이름으로_워커를_찾을_수_있다():
     """Validator 가 특정 축만 재실행시킬 때 쓴다."""
-    spec = registry.spec_by_dimension("workload")
+    spec = registry.spec_by_dimension("staffing")
 
     assert spec is not None
     assert spec.domain == "hcm"
-    assert spec.node_name == "hcm.workload"
+    assert spec.node_name == "hcm.staffing"
 
 
 def test_모든_워커는_결과스키마와_프롬프트를_갖는다():
@@ -791,8 +878,9 @@ def test_모든_워커는_결과스키마와_프롬프트를_갖는다():
             continue  # 자체 구현 워커는 프롬프트·도구를 쓰지 않는다
         assert spec.role.strip(), f"{spec.dimension} 역할 프롬프트 없음"
         assert spec.method.strip(), f"{spec.dimension} 판단절차 프롬프트 없음"
-        # my_week 는 일부러 도구가 없다 — 컨텍스트가 곧 전부라 더 찾아 헤맬 곳이 없어야 한다.
-        if spec.dimension != "my_week":
+        # my_week·risk 는 일부러 도구가 없다 — 전자는 컨텍스트가 곧 전부고,
+        # 후자는 조사하지 않는 종합 축이라 도구를 주면 다른 축을 또 보게 된다.
+        if spec.dimension not in {"my_week", "risk"}:
             assert spec.tools, f"{spec.dimension} 에 도구가 없음"
 
 

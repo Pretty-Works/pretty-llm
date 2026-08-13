@@ -158,6 +158,27 @@ SCHEDULES: list[dict[str, Any]] = [
 
 # ─── 예산 / 지출 / 결재 진행중(committed) ─────────────────────────
 
+# ─── 회의록 (followup 축 근거) ────────────────────────────────────
+#
+# 후속 조치가 실제 할 일로 이어졌는지 대조하는 축(project.followup)을 돌려보려면
+# 회의록이 있어야 한다. t102(결재선 화면 개편)는 대응 할 일이 있고, "권한 매트릭스
+# 재검토"는 대응 할 일이 없어 UNTRACKED 로 잡혀야 한다.
+
+MEETINGS: list[dict[str, Any]] = [
+    {"id": 5001, "project_id": 1001, "title": "스프린트 리뷰 2차", "date": "2026-07-22",
+     "purpose": "진행 점검",
+     "content": "결재선 화면 개편 진행률 40%. 권한 정책 재설계가 지연되어 알림 센터 API 착수가 밀림.",
+     "follow_up": "결재선 화면 개편 8월 첫째 주까지 마무리하기로 함. "
+                  "권한 매트릭스 재검토는 별도로 진행하기로 함.",
+     "attendee_names": ["김수민", "이민주", "박지원"]},
+    {"id": 5002, "project_id": 1001, "title": "QA 준비 회의", "date": "2026-07-24",
+     "purpose": "QA 일정 확정",
+     "content": "휴가 신청 플로우 QA 범위 합의. 1차 통합 테스트 일정 공유함.",
+     "follow_up": "휴가 신청 플로우 QA 8월 중순까지 완료하기로 함.",
+     "attendee_names": ["오세라", "박지원"]},
+]
+
+
 BUDGETS: list[dict[str, Any]] = [
     {"project_id": 1001, "total": 120_000_000, "currency": "KRW"},
     {"project_id": 1002, "total": 40_000_000, "currency": "KRW"},

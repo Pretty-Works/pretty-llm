@@ -63,3 +63,27 @@ def test_질문_한도를_넘으면_묻지_않고_거절한다() -> None:
     out = ask_user.func(label="x", text="y", options=["a"],
                         runtime=_Runtime(asked=QUESTION_LIMIT))
     assert "한도" in out
+
+
+# ★ 8/12 추가 — option_details: 보기(label) 하나만으로는 차이를 알 수 없는 경우
+#   (재계획 3안 등) 보기별 부가 설명을 실어 보낼 수 있어야 한다.
+def test_option_details가_같은_순서로_설명에_실린다(asked_payload) -> None:
+    _call(options=["일정 조정", "범위 축소"],
+          option_details=["마감을 2주 미룬다. risk=낮음", "비핵심 태스크를 제외한다. risk=중간"])
+    payload = asked_payload["payload"]
+    assert [o["description"] for o in payload["options"]] == [
+        "마감을 2주 미룬다. risk=낮음", "비핵심 태스크를 제외한다. risk=중간"]
+
+
+def test_option_details가_없으면_description은_None이다(asked_payload) -> None:
+    _call(options=["일정 조정", "범위 축소"])
+    payload = asked_payload["payload"]
+    assert [o["description"] for o in payload["options"]] == [None, None]
+
+
+def test_option_details가_options보다_짧아도_에러없이_남는_항목은_None(asked_payload) -> None:
+    _call(options=["일정 조정", "범위 축소", "인력 재배치"],
+          option_details=["마감을 2주 미룬다."])
+    payload = asked_payload["payload"]
+    assert [o["description"] for o in payload["options"]] == [
+        "마감을 2주 미룬다.", None, None]

@@ -26,7 +26,6 @@ from langchain_core.tools import tool
 
 from app.clients.backend import backend
 from app.common.run_context import current_run_id
-from app.config import get_settings
 from app.utils.logger import get_logger
 from app.utils.parser import parse_date
 
@@ -41,11 +40,11 @@ def _json(payload: Any) -> str:
 
 
 async def _get(path: str, **params: Any) -> Any | None:
-    """실백엔드 조회. mock 모드·run_id 부재·실패면 None — 호출부가 '확인 못 함'으로 처리한다."""
-    settings = get_settings()
-    if settings.uses_fixtures:
-        log.warning("픽스처 모드라 내부도구를 호출하지 않는다: %s (MOCK_BACKEND 확인)", path)
-        return None
+    """백엔드 조회. 창구는 backend.get() 하나다 (mock 이든 실백엔드든).
+
+    run_id 부재·호출 실패면 None — 호출부가 '확인 못 함'으로 처리한다.
+    픽스처로 메우지 않는다: 값을 지어내느니 없다고 답하는 쪽이 낫다.
+    """
     run_id = current_run_id.get()
     if not run_id:
         log.warning("run_id 없이 내부도구 호출: %s — 조회 생략", path)

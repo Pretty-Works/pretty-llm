@@ -19,9 +19,9 @@ from app.schemas.state import Domain, WorkerOutput
 
 # 도메인 → 병렬 실행할 워커(dimension) 세트. 실제 설계와 동일.
 WORKER_SETS: dict[Domain, list[str]] = {
-    Domain.vacation: ["risk", "workload"],
+    Domain.vacation: ["risk", "staffing"],
     Domain.project: ["priority", "risk", "cost"],
-    Domain.hcm: ["skill_fit", "workload"],
+    Domain.hcm: ["staffing"],
     Domain.meeting: ["slot_a", "slot_b", "slot_c"],
 }
 
@@ -33,7 +33,7 @@ _MOCK: dict[str, WorkerOutput] = {
                          reasoning="유일 담당 task 존재 (mock)", confidence=0.9),
     "cost": WorkerOutput(dimension="cost", result={"execution_rate": 62},
                          reasoning="집행률 62%, 여유 있음 (mock)", confidence=0.8),
-    "workload": WorkerOutput(dimension="workload", result={"level": "medium"},
+    "staffing": WorkerOutput(dimension="staffing", result={"level": "medium"},
                              reasoning="팀 평균 업무량 (mock)", confidence=0.7),
 }
 
