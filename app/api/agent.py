@@ -132,13 +132,20 @@ async def start_run(req: RunRequest) -> StreamingResponse:
         else:
             gen = _engine_b_stream(goal, req.runId, history)
 
-    elif decision.route == "simple_query":
+    elif decision.route == "simple_query" or (decision.route == "engine_a" and not decision.domains):
+        # ★ 8/13 추가 — engine_a 인데 domains 가 비어 온 경우("점메추 해줘"처럼
+        #   그룹웨어 어느 도메인에도 안 맞는 잡담) 예전엔 domains 를 ["meeting"]
+        #   으로 임의로 채워서, 엉뚱하게 회의록 작성 흐름으로 새는 사고가 있었다
+        #   (실사용 피드백: "점메추 해줘"에 "회의 제목을 입력해 주세요"가 뜸).
+        #   분류가 애매하면 쓰기 도구가 없는 simple_query 로 보내는 게 안전하다 —
+        #   최악의 경우도 "도와드릴 수 없어요"로 끝나지, 엉뚱한 도메인 흐름을
+        #   시작하지 않는다.
         agent = await simple_query.get_agent()
         gen = hitl.stream_run(agent, goal, history, req.runId, ctx,
                               route="simple_query")
 
     else:                                            # engine_a
-        domains = decision.domains or ["meeting"]
+        domains = decision.domains
         subtasks = (await composite.decompose(goal, domains)
                     if len(domains) > 1 else [])
 
@@ -225,7 +232,8 @@ def _validated_command(req: ResumeRequest, snapshot, run_id: str):
             parts.append(f"선택한 항목 id: {', '.join(req.selectedIds)}")
         if req.text:
             parts.append(f"입력: {req.text}")
-        return hitl.build_resume_command("question", answer=" / ".join(parts))
+        return hitl.build_resume_command("question", answer=" / ".join(parts),
+                                         interrupt_ids=_pending_interrupt_ids(snapshot))
 
     if req.decision not in ("APPROVED", "REJECTED", "ALTERNATIVE"):
         raise HTTPException(400, detail="decision must be APPROVED|REJECTED|ALTERNATIVE")
@@ -289,6 +297,22 @@ def _pending_request_count(snapshot) -> int:
             if isinstance(v, dict):
                 return max(1, len(v.get("action_requests") or []))
     return 1
+
+
+def _pending_interrupt_ids(snapshot) -> list[str]:
+    """대기 중인 interrupt 들의 id.
+
+    ★ 8/13 추가 — LLM 이 ask_user 를 병렬로 두 번 부르면 interrupt 가 2개 쌓인다.
+      그 상태에서 id 없이 재개하면 langgraph 가 RuntimeError 를 던져 실행이 통째로
+      죽는다. hitl.build_resume_command 가 {id: 답} 맵을 만들 수 있게 여기서 꺼낸다.
+    """
+    ids: list[str] = []
+    for task in getattr(snapshot, "tasks", ()) or ():
+        for intr in getattr(task, "interrupts", ()) or ():
+            iid = getattr(intr, "id", None)
+            if iid:
+                ids.append(iid)
+    return ids
 
 
 def _pending_kind(snapshot) -> str | None:

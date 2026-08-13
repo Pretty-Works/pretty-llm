@@ -55,10 +55,19 @@ async def task_list(projectId: int | None, weekOffset: int,
     for t in r["tasks"]:
         flags = ("✔" if t["completed"] else "□") + (" (지난주 이월)" if t["isCarryOver"] else "")
         proj = f" / {t['projectName']}" if t["projectName"] else " / 개인"
-        lines.append(f"- [{t['taskId']}] {flags} {t['content']} (마감 {t['dueDate']}{proj})")
+        # ★ ID를 줄 맨 앞 [123] 형태로 두면 LLM이 답변에 그대로 베끼는 사고가 잦다
+        #   (실사용 피드백). 완전히 빼면 task_toggle_status·task_update 호출에 쓸 ID를
+        #   못 구하니, "내부용"이라는 티가 나는 형식으로 맨 뒤로 옮긴다.
+        lines.append(f"- {flags} {t['content']} (마감 {t['dueDate']}{proj}) "
+                     f"[내부관리번호:{t['taskId']}]")
     s = r["summary"]
+    # ★ completionRate(%)만 있고 "완료 N건"이 없어서, LLM이 셀 수 있는 값이 없어
+    #   직접 세다가 틀리는 사고가 실제로 났다(실사용 피드백: 2건인데 3건이라 답함).
+    #   task_due_within 과 같은 패턴으로 코드가 직접 센 값을 준다.
+    done = sum(1 for t in r["tasks"] if t["completed"])
     result = (f"{r['weekStart']}~{r['weekEnd']} 할일 {s['total']}건 "
-              f"(완료율 {s['completionRate']}% — 서버 계산값):\n" + "\n".join(lines))
+              f"(완료 {done} · 미완료 {s['total'] - done} — 코드로 직접 센 값):\n"
+              + "\n".join(lines))
     runtime.context.known_facts[key] = result   # analyze_impact 가 재사용 (주별로 구분 보관)
     return result
 
@@ -125,8 +134,8 @@ async def task_due_within(projectId: int | None, untilDate: str | None,
     lines = []
     for t in hits:
         proj = f" / {t['projectName']}" if t["projectName"] else " / 개인"
-        lines.append(f"- [{t['taskId']}] {'✔' if t['completed'] else '□'} {t['content']}"
-                     f" (마감 {t['dueDate']}{proj})")
+        lines.append(f"- {'✔' if t['completed'] else '□'} {t['content']}"
+                     f" (마감 {t['dueDate']}{proj}) [내부관리번호:{t['taskId']}]")
     result = (f"{range_label} 마감 할일 {len(hits)}건 (완료 {len(done)} · 미완료 {len(pending)} — "
               "코드로 직접 센 값):\n" + "\n".join(lines))
     runtime.context.known_facts[key] = result
@@ -184,7 +193,7 @@ async def task_update(taskId: int, content: str, projectId: int | None, dueDate:
     except WriteRejectedError as e:
         return str(e)
     proj = f" / {r['projectName']}" if r.get("projectName") else " / 개인"
-    return f"할일 [{taskId}] 을 수정했습니다 — '{r['content']}' (마감 {r['dueDate']}{proj})."
+    return f"할일 '{r['content']}' 을 수정했습니다 (마감 {r['dueDate']}{proj})."
 
 
 @tool
@@ -205,6 +214,6 @@ async def task_toggle_status(taskId: int, completed: bool,
     except WriteRejectedError as e:
         return str(e)
     if not r.get("changed", True):
-        return f"할일 [{taskId}] 은 이미 그 상태였습니다."
+        return f"할일 '{r['content']}' 은 이미 그 상태였습니다."
     state = "완료" if r["completed"] else "미완료"
-    return f"할일 [{taskId}] '{r['content']}' 을 {state}로 바꿨습니다."
+    return f"할일 '{r['content']}' 을 {state}로 바꿨습니다."
