@@ -23,7 +23,7 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from mcp_servers.gmail_mcp import gmail_api, run_resolver, token_resolver
+from mcp_servers.gmail_mcp import gmail_api, google_oauth, run_resolver, state_token, token_resolver
 from mcp_servers.gmail_mcp.config import get_settings
 from mcp_servers.gmail_mcp.logger import get_logger
 
@@ -132,3 +132,27 @@ async def gmail_connection_status(run_id: str) -> dict:
     """Agent가 '메일 보내줘' 요청을 받았는데 미연결일 때, 사용자에게 연결부터 안내하려고 쓴다."""
     access_token = await _resolve_token(run_id)
     return {"connected": access_token is not None}
+
+
+@mcp.tool()
+async def gmail_connect_url(run_id: str) -> dict:
+    """★ 2026-08-13 추가 — gmail_connection_status 로 미연결을 확인했으면 이걸 불러서
+    실제 Google 로그인 URL을 받아라. 이 URL 자체엔 토큰이나 비밀정보가 없다(서명된
+    state 값만 담긴다) — 사용자가 클릭하면 Google 동의화면으로 이동해서 연동을
+    끝낼 수 있다. app/tools/navigate.py 의 navigate(targetScreen=..., params={
+    "authorizeUrl": 이 함수가 준 URL}) 로 넘겨서 사용자에게 클릭 버튼으로
+    보여줘라 — URL을 텍스트로 그대로 답하지 마라(절대 규칙 2번과 같은 이유:
+    말로만 하면 화면에 클릭 가능한 버튼이 안 생긴다).
+
+    run_id→user_id 조회 자체가 실패하면(run 만료 등) {"error": "..."} 를 돌려준다
+    — 이땐 URL 없이 "잠시 후 다시 시도해달라"고 안내하라."""
+    try:
+        user_id = await run_resolver.resolve_user_id(run_id)
+    except run_resolver.RunResolutionError as exc:
+        log.warning("run_id=%s → user_id 조회 실패(연동 URL 발급 불가): %s", run_id, exc)
+        return {"error": "run_id_resolution_failed"}
+
+    state = state_token.issue(user_id)
+    url = google_oauth.build_authorize_url(state)
+    log.info("connect-url 발급(채팅 경로) run_id=%s → user_id=%s", run_id, user_id)
+    return {"authorizeUrl": url}

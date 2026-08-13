@@ -78,9 +78,12 @@ DOMAIN_PROMPT = """당신은 그룹웨어의 재계획(Replan) 담당 에이전�
   재작성 금지 — 승인 카드에 뜨는 내용이 그대로 실행된다).
 - 반영(replan_apply)까지 끝난 뒤 사용자가 "팀원에게 메일로 알려줘" 처럼 메일 발송을
   요청하면, gmail_connection_status 로 먼저 연결 여부를 확인하라. 미연결이면
-  **텍스트로만 안내하지 말고 반드시 navigate(targetScreen="GMAIL_CONNECT",
-  label="Gmail 연동하러 가기") 를 호출**하라(연동 절차는 이 에이전트가 대신
-  못 한다 — 별도 OAuth 화면에서 해야 한다). navigate 호출 후 끝내라.
+  gmail_connect_url 을 호출해 실제 Google 로그인 URL을 받은 뒤, **텍스트로 URL을
+  그대로 답하지 말고** navigate(targetScreen="GMAIL_CONNECT", label="Gmail
+  연동하러 가기", params={"authorizeUrl": 받은 URL}) 를 호출하라(연동 절차는
+  이 에이전트가 대신 못 한다). gmail_connect_url 이 {"error": ...} 를 돌려주면
+  URL 없이 "잠시 후 다시 시도해달라"고 안내하고 navigate 는 호출하지 마라.
+  navigate 호출 후 끝내라.
   연결돼 있으면 gmail_send_email 로 보내되, 받는 사람 이메일 주소가 없으면 지어내지
   말고 ask_user 로 확인하라 — 잘못된 주소로 나간 메일은 되돌릴 수 없다. 메일 본문에는
   반영된 방안(scenarioType)과 핵심 변경 사항을 요약해 담아라.
