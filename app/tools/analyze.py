@@ -53,9 +53,16 @@ async def analyze_impact(question: str, runtime: ToolRuntime[RunContext]) -> str
     full_question = _with_known_facts(question, ctx.known_facts)
 
     async for ev in run_engine_b(full_question, ctx.run_id):
-        if ev["type"] == "progress" and runtime.stream_writer:
-            runtime.stream_writer({"text": ev["text"]})     # → _drive 가 step 으로 방출
-        elif ev["type"] == "result":
-            answer = ev["answer"]
+        # ★ 계약(모듈 docstring)은 dict 만 오게 돼 있지만, 실제로 SSE 문자열이
+        #   섞여 나온 사고가 있었다(engine_b.runner._run_baseline 이 폴백 경로에서
+        #   yield _sse(...) 로 문자열을 흘림 → ev["type"] 이 TypeError 로 터지고
+        #   런 전체가 AGENT_007 로 죽음). 남의 모듈 회귀 하나가 사용자의 요청을
+        #   통째로 날리지 않도록, 계약을 어긴 이벤트는 조용히 건너뛴다.
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("type") == "progress" and runtime.stream_writer:
+            runtime.stream_writer({"text": ev.get("text", "")})  # → _drive 가 step 으로 방출
+        elif ev.get("type") == "result":
+            answer = ev.get("answer") or answer
 
     return f"[심층 분석 결과]\n{answer}"

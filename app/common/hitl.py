@@ -424,6 +424,10 @@ async def _drive(agent, agent_input, run_id: str, ctx: RunContext,
                         continue
                     seen_calls.add(tc["id"])
                     tool_call_ids[tc["name"]] = tc["id"]
+                    # 실사용 디버깅용 — BE 로그는 실패한 API 호출의 경로만 보여주고
+                    # 어느 tool 이 어떤 인자로 그 호출을 만들었는지는 안 보인다.
+                    # print 는 uvicorn 터미널에 남는다 (engine_b/runner.py 와 동일 패턴).
+                    print(f"[tool_call] {tc['name']}({tc.get('args')})")
                     yield sse.step(_step_text(tc["name"]))
                 # ③ 최종 답 후보 (도구 호출 없는 AI 텍스트)
                 if getattr(msg, "type", "") == "ai" and not getattr(msg, "tool_calls", None):

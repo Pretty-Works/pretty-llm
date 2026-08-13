@@ -32,10 +32,21 @@ async def milestone_list(projectId: int, runtime: ToolRuntime[RunContext]) -> st
     for m in r["milestones"]:
         mark = "✔" if m["completed"] else ("→ 다음 차례" if m["isNext"] else "□")
         late = " ⚠️지연" if m["isOverdue"] else ""
-        lines.append(f"- [{m['milestoneId']}] {mark} {m['goal']} (목표 {m['targetDate']}{late})")
+        # toggleable 은 서버(MilestonePolicy)가 "순서상" 지금 바꿀 수 있는지 판정한 값.
+        # 이걸 안 보여주면 순서를 건너뛴 마일스톤을 제안했다가 PROJECT_024 로 거절당한다.
+        # (권한은 별개다 — project_search 의 isOwner·myRole 로 따로 확인할 것)
+        lock = "" if m.get("toggleable", True) else " 🔒순서상 아직 변경 불가"
+        lines.append(f"- id={m['milestoneId']} {mark} '{m['goal']}' "
+                     f"(목표 {m['targetDate']}{late}){lock}")
     s = r["summary"]
     result = (f"마일스톤 {s['total']}개 중 {s['completed']}개 완료 "
-              f"({s['completionRate']}%):\n" + "\n".join(lines))
+              f"({s['completionRate']}%):\n" + "\n".join(lines)
+              # ★ id 는 도구 인자용이다. 실사용 피드백: 답변에 "마일스톤 #11",
+              #   "프로젝트 #2" 처럼 내부 번호가 그대로 노출돼 사용자가 불편해했다.
+              + "\n\n※ id 는 milestone_toggle_status 인자로만 쓰고 사용자에게 보여주지 마라"
+                " — 사용자에게는 따옴표 안의 이름으로 말하라."
+                "\n※ 사용자가 말한 이름이 위 목록에 없으면 비슷한 것으로 대신하지 말고,"
+                " 이 목록을 보여주며 어느 것인지 되물어라.")
     runtime.context.known_facts[f"milestone_list:{projectId}"] = result
     return result
 
@@ -59,7 +70,7 @@ async def milestone_toggle_status(projectId: int, milestoneId: int, completed: b
     except WriteRejectedError as e:
         return str(e)
     if not r.get("changed", True):
-        return f"마일스톤 [{milestoneId}] 은 이미 그 상태였습니다."
+        return f"마일스톤 '{r.get('goal') or milestoneId}' 은 이미 그 상태였습니다."
     state = "완료" if r["completed"] else "미완료"
     return (f"마일스톤 '{r['goal']}' 을 {state}로 바꿨습니다 "
             f"(프로젝트 완료율 {r['completionRateAfter']}%).")
