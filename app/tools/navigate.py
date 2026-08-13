@@ -124,10 +124,8 @@ def open_external_url(url: str, label: str, runtime: ToolRuntime[RunContext]) ->
 
 
 @tool
-def fill_form(formData: dict, runtime: ToolRuntime[RunContext]) -> str:
-    """프로젝트 생성 폼을 대신 채운다. 대화로 모은 정보가 충분해졌을 때 호출한다.
 def fill_form(targetScreen: str, formData: dict, runtime: ToolRuntime[RunContext]) -> str:
-    화면의 입력 폼을 대신 채운다. 대화로 모은 정보가 충분해졌을 때 호출한다.
+    """화면의 입력 폼을 대신 채운다. 대화로 모은 정보가 충분해졌을 때 호출한다.
 
     ⚠️ 이 도구는 아무것도 저장·생성하지 않는다 — 폼만 채우고, 최종 버튼은
     사용자가 직접 누른다. 그러므로 모르는 값을 지어내서 채우면 안 된다.
