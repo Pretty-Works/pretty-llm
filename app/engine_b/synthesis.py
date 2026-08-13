@@ -39,8 +39,15 @@ async def synthesize(
     context: AnalysisContext,
     validation: ValidationReport | None = None,
     scenario: ScenarioSpec | None = None,
+    apply_feedback: str | None = None,
 ) -> SynthesisResult:
-    """워커 결과들을 결론 하나로 통합한다."""
+    """워커 결과들을 결론 하나로 통합한다.
+
+    apply_feedback: ★ 8/12 추가 — 직전 시도의 proposed_changes 가
+      app/engine_b/apply_builder.build_operations() 를 통과 못 했을 때, 그 거부
+      사유를 여기 실어 넘기면 프롬프트가 "왜 실패했는지" 보고 고쳐서 다시 낸다
+      (graph.py _synthesis_node 가 재시도 루프에서 채운다. 없으면 최초 시도).
+    """
     scenario = scenario or ScenarioSpec()
     usable = [output for output in outputs if not output.error]
 
@@ -57,6 +64,7 @@ async def synthesize(
                 scenario=_render_scenario(scenario),
                 validation=_render_validation(validation),
                 worker_results=_render_workers(usable),
+                apply_feedback=apply_feedback or "- (없음 — 최초 시도)",
             )
         ),
     ]

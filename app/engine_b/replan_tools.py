@@ -112,10 +112,20 @@ async def propose_replan_scenarios(query: str, project_id: int | None = None,
 
     by_id = {c.scenario_type: c for c in tradeoff.comparisons}
     scenarios: list[ReplanScenario] = []
+    # ★ 8/12 추가 — 이전엔 여기서 제외된 안을 서버 로그에만 남기고 조용히 지웠다.
+    #   그러면 3안을 만들어도 1~2안만 사용자에게 보이는데, LLM 도 사용자도 왜
+    #   줄었는지 알 방법이 없었다("3안 생성해줬는데 1안만 선택지에 있어" 증상).
+    #   여기서 이유를 모아 _render() 결과 텍스트에 실어 LLM 이 사용자에게
+    #   솔직히 알릴 수 있게 한다.
+    dropped: list[str] = []
     for s in scenarios_result:
+        label = SCENARIO_LABELS.get(s.scenario_id, s.scenario_id)
         built = build_operations(s)
         if not built.ok:
             log.warning("조정안 %s 제외(변환 실패): %s", s.scenario_id, built.rejected)
+            reason = built.rejected[0]["reason"] if built.rejected else (
+                "제안된 변경 사항을 실제 반영 가능한 작업으로 바꾸지 못함")
+            dropped.append(f"{label}: {reason}")
             continue
         cmp = by_id.get(s.scenario_id)
         try:
@@ -128,14 +138,15 @@ async def propose_replan_scenarios(query: str, project_id: int | None = None,
             ))
         except ValidationError as e:
             log.warning("조정안 %s 제외(스키마 검증 실패): %s", s.scenario_id, e)
+            dropped.append(f"{label}: 저장 형식 검증 실패({_first_pydantic_error(e)})")
 
     if not scenarios:
         return ("지금은 반영 가능한 재계획 안을 만들지 못했습니다. 잠시 후 다시 "
                 "시도해달라고 안내하세요.")
 
-    log.info("replan 분석 완료: projectId=%s scenarios=%s",
-             resolved_project_id, [s.scenarioType for s in scenarios])
-    return _render(resolved_project_id, scenarios, tradeoff)
+    log.info("replan 분석 완료: projectId=%s scenarios=%s dropped=%s",
+             resolved_project_id, [s.scenarioType for s in scenarios], dropped)
+    return _render(resolved_project_id, scenarios, tradeoff, dropped)
 
 
 @tool
@@ -203,7 +214,8 @@ def _risk(risk_ko_or_en: str) -> str:
     return _RISK_KO_TO_EN.get(v, "MEDIUM")
 
 
-def _render(project_id: int, scenarios: list[ReplanScenario], tradeoff: TradeoffResult) -> str:
+def _render(project_id: int, scenarios: list[ReplanScenario], tradeoff: TradeoffResult,
+           dropped: list[str] | None = None) -> str:
     """LLM 이 읽을 결과 텍스트. replan_save 인자로 그대로 옮겨 적어야 하므로
     operations 까지 전부 펼쳐 보여준다(예전엔 replanId 만 노출했지만, 이제 저장
     자체를 LLM 이 도구 인자로 채워야 해서 숨길 수 없다)."""
@@ -221,10 +233,27 @@ def _render(project_id: int, scenarios: list[ReplanScenario], tradeoff: Tradeoff
             lines.append(f"     - {op.model_dump(mode='json', by_alias=True, exclude_none=True)}")
     if tradeoff.tradeoffs:
         lines += ["", "감수사항: " + ", ".join(tradeoff.tradeoffs)]
+    if dropped:
+        # ★ 8/12 추가 — 3안 중 일부가 반영 가능한 형태로 안 만들어졌을 때, 그 사실을
+        #   숨기지 않는다. LLM 은 이걸 보고 사용자에게 "N개는 제외했다"고 먼저 알린
+        #   뒤 남은 안으로 진행해야 한다(3안이 안 왔다고 곧장 재생성부터 하지 말 것 —
+        #   재생성은 세션당 1회뿐이라 낭비하면 진짜 필요할 때 못 쓴다).
+        lines += ["", f"⚠️ {len(dropped)}개 안은 반영 가능한 형태로 만들지 못해 제외했습니다:"]
+        for d in dropped:
+            lines.append(f"   - {d}")
     lines += ["",
               "저장하려면 replan_save(projectId, reason, scenarios) 를 위 scenarioType·"
               "summary·risk·operations 그대로 옮겨 적어 호출하라(재작성 금지)."]
     return "\n".join(lines)
+
+
+def _first_pydantic_error(exc: ValidationError) -> str:
+    errs = exc.errors()
+    if not errs:
+        return "검증 실패"
+    e = errs[0]
+    loc = ".".join(str(x) for x in e.get("loc", ()))
+    return f"{loc or '?'}: {e.get('msg', '검증 실패')}"
 
 
 def _project_id(request: AnalysisRequest, plan: AnalysisPlan) -> int | None:

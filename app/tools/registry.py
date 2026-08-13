@@ -74,15 +74,23 @@ AUTO_ALLOWED: frozenset[str] = frozenset({
     "task.toggleStatus",         # 토글이라 원복
     "task.update",               # 본인 할일 내용/마감/프로젝트 수정 — 다시 고칠 수 있음
     "milestone.toggleStatus",
+    # ★ replan.create(저장)는 여기 없다 — 8/9 BE 스펙 개정으로 AUTO_FORBIDDEN 으로
+    #   옮겨갔다(아래). 예전엔 여기 있었는데, 옮기면서 지우지 않아 두 목록에 동시에
+    #   있던 걸 정리했다 — 있으면 auto 모드 판정이 어느 쪽을 봐야 할지 애매해진다.
 })
 
 AUTO_FORBIDDEN: frozenset[str] = frozenset({
     "leave.create", "leave.update",          # 승인자에게 알림이 이미 감
     "schedule.create", "schedule.update",    # 참석자 전원에게 알림
     "expense.create",                        # 돈
-    "replan.save",                           # ★ 2026-08-09 BE 스펙 개정 — 저장도 승인 필요.
+    "replan.create",                         # ★ 2026-08-09 BE 스펙 개정 — 저장도 승인 필요.
                                               #   외부 텍스트를 읽고 만든 계획이 "공식 기록"이
                                               #   되는 시점이라 사람이 한 번 본다.
+                                              #   ★ 8/12 — 카탈로그 이름을 "replan.save"에서
+                                              #   BE 컨트롤러 상수/렌더러가 실제로 아는
+                                              #   "replan.create"로 맞췄다. 이름이 안 맞으면
+                                              #   BE 가 승인 카드를 못 그리거나(§ApprovalPreviewRegistry)
+                                              #   재개 검증에서 걸려 AGENT_007 로 뭉개진다.
     "replan.apply",                          # 배치 반영 + 여러 구성원에게 알림
     "gmail.send",                            # 상대방에게 실제 메일이 나감 — 되돌릴 수 없음
 })
@@ -92,11 +100,11 @@ AUTO_FORBIDDEN: frozenset[str] = frozenset({
 # ③ 쓰기 도구 명세
 #
 #    규칙 1 — 도구 인자 이름 = 내부 API 요청 바디 필드 이름.
-#      인자 전부가 그대로 params(요청 바디)가 된다. ★ 경로변수(projectId 등)도
-#      바디에 남긴다 — 승인 토큰이 바디 해시로 봉인되므로, 경로만으로 대상을
-#      정하면 승인 때와 다른 프로젝트로 보내도 해시가 그대로 통과한다. BE 승인
-#      카드 렌더러도 바디에서 이 값들을 필수로 읽는다(없으면 AGENT_007).
-#      path.format(**args) 는 필요한 키만 쓰므로 바디에 남아 있어도 문제없다.
+#      인자 전부가 그대로 params(요청 바디)가 된다. ★ path_params 는 항상 () 로
+#      둔다 — 경로변수(projectId 등)도 바디에 남아야 한다. 승인 해시가 바디만
+#      덮으므로 바디에서 빼면 승인의 보호를 못 받고, BE 승인 카드 렌더러도
+#      바디에서 이 값들을 필수로 읽는다(없으면 AGENT_007). 값을 넣는 순간
+#      그 도구는 죽는다 — 8/12에 쓰기 8종이 이걸로 전멸했었다.
 #
 #    규칙 2 — 키는 LangChain 도구 이름(meeting_create), catalog 는 규격 이름(meeting.create).
 #      OpenAI 함수명에는 점(.)을 못 쓰므로 둘을 나눈다. 승인 이벤트의 tool 필드와
@@ -113,61 +121,86 @@ WRITE_TOOLS: dict[str, dict] = {
         "catalog": "meeting.create",
         "method": "POST",
         "path": "/projects/{projectId}/meetings",
+        "path_params": (),
     },
     "leave_create": {
         "catalog": "leave.create",          # AUTO_FORBIDDEN — auto 모드에도 항상 사람 승인
         "method": "POST",
         "path": "/leaves",
+        "path_params": (),
     },
     "leave_update": {
         "catalog": "leave.update",
         "method": "PATCH",
         "path": "/leaves/{leaveId}",
+        "path_params": (),
     },
     "task_create": {
         "catalog": "task.create",           # 배치 — body {"tasks":[...]} 1~10건 단일 트랜잭션
         "method": "POST",
         "path": "/tasks",
+        "path_params": (),
     },
     "task_toggle_status": {
         "catalog": "task.toggleStatus",
         "method": "PATCH",
         "path": "/tasks/{taskId}/status",
+        "path_params": (),
     },
     "task_update": {
         "catalog": "task.update",           # PUT 전체 교체 — content/projectId/dueDate 항상 셋 다 보낸다
         "method": "PUT",                    # ⚠️ BE 에 이 엔드포인트가 아직 없다 — 합의 대기
         "path": "/tasks/{taskId}",
+        "path_params": (),
     },
     "schedule_create": {
         "catalog": "schedule.create",
         "method": "POST",
         "path": "/schedules",
+        "path_params": (),
     },
     "schedule_update": {
         "catalog": "schedule.update",
         "method": "PATCH",
         "path": "/schedules/{scheduleId}",
+        "path_params": (),
     },
     "expense_create": {
         "catalog": "expense.create",
         "method": "POST",
         "path": "/projects/{projectId}/expenses",
+        "path_params": (),
     },
     "milestone_toggle_status": {
         "catalog": "milestone.toggleStatus",
         "method": "PATCH",
         "path": "/projects/{projectId}/milestones/{milestoneId}/status",
+        "path_params": (),
     },
     "replan_save": {
-        "catalog": "replan.save",           # AUTO_FORBIDDEN — 승인 필요(2026-08-09 스펙 개정)
+        # ★ 8/12 — 이 딕셔너리가 "catalog"/"method"/"path"/"path_params" 를 두 번
+        #   정의하고 있었다(파이썬은 문법 오류 없이 뒤 블록으로 조용히 덮어쓴다).
+        #   그래서 실제로는 뒤 블록의 path_params=("projectId",) 가 적용돼
+        #   build_request() 가 projectId 를 바디에서 빼먹고 있었다 — BE 가 바디에도
+        #   projectId 를 기대하면 그대로 400 → AGENT_007. 아래가 원래 의도대로
+        #   하나로 합친 버전이다.
+        "catalog": "replan.create",         # AUTO_FORBIDDEN — 승인 필요(2026-08-09 스펙 개정)
+                                             #   ★ BE 컨트롤러 상수/렌더러가 아는 이름은
+                                             #   "replan.save" 가 아니라 "replan.create" 다.
         "method": "POST",
         "path": "/projects/{projectId}/replans",
+        # ★ path_params 를 비워둔다 — projectId 가 경로에도, 바디에도 그대로 들어가야
+        #   한다(승인 토큰이 바디 해시로 봉인되므로, 경로만으로 대상을 정하면 승인 때와
+        #   다른 프로젝트로 보내도 해시가 그대로다). path.format(**args) 는 args 에 있는
+        #   키만 쓰므로 projectId 가 params 에도 남아 있어도 문제없다.
+        "path_params": (),
     },
     "replan_apply": {
         "catalog": "replan.apply",          # AUTO_FORBIDDEN — 저장분에서 꺼내 반영(승인 필요)
         "method": "POST",
         "path": "/projects/{projectId}/replans/{replanId}/apply",
+        # ★ 위와 동일한 이유로 projectId·replanId 둘 다 body 에도 남긴다.
+        "path_params": (),
     },
 }
 
@@ -195,8 +228,9 @@ def build_request(tool_name: str, args: dict) -> tuple[str, str, dict]:
     호출 전에 `is_mcp_write()`로 걸러야 한다(app/common/hitl.py 참고).
     """
     spec = WRITE_TOOLS[tool_name]
-    # 경로변수도 params(바디)에 그대로 남긴다 — 이유는 위 "규칙 1" 참고.
-    return spec["method"], spec["path"].format(**args), dict(args)
+    path = spec["path"].format(**args)
+    params = {k: v for k, v in args.items() if k not in spec["path_params"]}
+    return spec["method"], path, params
 
 
 def is_write(tool_name: str) -> bool:

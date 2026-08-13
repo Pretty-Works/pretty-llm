@@ -373,7 +373,7 @@ def _mock_write(path: str, body: bytes) -> Any:
                 "completed": data.get("completed"), "changed": True,
                 "completedAt": "2026-08-05T12:00:00" if data.get("completed") else None,
                 "completionRateAfter": 100 if data.get("completed") else 50}
-    if path.endswith("/replans"):                        # replan.save (제안 저장, ★ 승인 필요)
+    if path.endswith("/replans"):                        # replan.create (제안 저장, ★ 승인 필요)
         # ★ 2026-08-09 BE 스펙 개정 — replanId 는 정수. apply 때 operations 를 다시
         #   안 보내므로(BE 가 저장분에서 꺼내 씀), mock 도 저장 내용을 기억해 둬야
         #   apply 응답의 건수 필드를 그럴듯하게 채울 수 있다.

@@ -22,7 +22,7 @@ from app.utils.parser import truncate
 log = get_logger("engine_b.analysis_router")
 
 # 라우터가 고를 수 있는 강조 축. 여기 없는 값은 버린다.
-KNOWN_FOCUS = {"priority", "risk", "cost", "skill_fit", "workload"}
+KNOWN_FOCUS = {"priority", "risk", "cost", "followup", "staffing", "my_week"}
 KNOWN_DOMAINS = {"project", "hcm", "meeting", "vacation"}
 
 # LLM 실패 시 폴백에 쓰는 키워드

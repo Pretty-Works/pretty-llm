@@ -60,7 +60,7 @@ def test_실백엔드_프로젝트는_id_키로_넘어온다(monkeypatch) -> Non
 
 def test_픽스처와_실백엔드가_같은_키를_쓴다(monkeypatch) -> None:
     """두 분기의 모양이 갈리면 배포에서만 터진다 — 공통 키를 강제한다."""
-    from app.tools import demo_data
+    from app.tests.fixtures import demo_data
 
     fixture_member = demo_data.list_project_members(1001)[0]
     _patch_backend(monkeypatch)

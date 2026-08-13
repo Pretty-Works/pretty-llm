@@ -49,5 +49,5 @@ SPEC = WorkerSpec(
     method=prompt.METHOD,
     result_model=CostResult,
     tools=(*BUDGET_TOOLS, get_project_overview),
-    context_sections=("project", "budget", "todos"),
+    context_sections=("project", "milestones", "budget", "todos"),
 )

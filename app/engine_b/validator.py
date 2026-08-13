@@ -25,9 +25,9 @@ from app.utils.parser import overlaps, parse_date
 
 log = get_logger("engine_b.validator")
 
-# skill_fit 은 스킬 데이터 없이 이력으로 추론하는 축이라 구조적으로 확신할 수 없다.
+# 역할 판단의 근거는 부서·현 역할·이 프로젝트에서 처리한 할 일뿐이라 구조적으로 확신할 수 없다.
 # 프롬프트로만 막으면 모델이 자주 넘기므로 코드로 상한을 강제한다.
-SKILL_FIT_CONFIDENCE_CAP = 0.75
+STAFFING_CONFIDENCE_CAP = 0.75
 
 # 정수 지표는 정확히 일치해야 하고, load_index 만 반올림 오차를 허용한다.
 _LOAD_INDEX_TOLERANCE = 0.05
@@ -46,8 +46,8 @@ def validate(
         "priority": _check_priority,
         "risk": _check_risk,
         "cost": _check_cost,
-        "skill_fit": _check_skill_fit,
-        "workload": _check_workload,
+        "staffing": _check_staffing,
+        "followup": _check_followup,
     }
 
     for output in outputs:
@@ -211,19 +211,8 @@ def _check_priority(
                 subject=task_id,
             )
 
-        for blocked in item.get("blocks") or []:
-            if str(blocked) not in known:
-                _add(
-                    report,
-                    output,
-                    "UNKNOWN_TASK",
-                    f"{task_id} 가 막고 있다고 한 {blocked} 가 존재하지 않는다.",
-                    "존재하는 할 일 id 만 blocks 에 넣어라.",
-                    subject=str(blocked),
-                    severity="warning",
-                )
-
-    # 열린 할 일이 누락되면 순위표 자체가 반쪽이 된다 (경고로만)
+    # 컨텍스트에 실린 열린 할 일이 누락되면 순위표가 반쪽이 된다 (경고로만).
+    # ★ "전체"가 아니라 "컨텍스트 범위" 기준이다 — /tasks 가 주 단위라 전체는 애초에 못 본다.
     missing = [
         str(t.id) for p in context.projects for t in p.open_todos if str(t.id) not in seen
     ]
@@ -233,12 +222,71 @@ def _check_priority(
             output,
             "INCOMPLETE_RANKING",
             f"순위에서 빠진 열린 할 일이 있다: {', '.join(str(t) for t in missing[:8])}",
-            "열려 있는 할 일은 전부 순위에 포함하라.",
+            "컨텍스트에 실린 열린 할 일은 전부 순위에 포함하라.",
             severity="warning",
         )
 
 
 # ─── risk ─────────────────────────────────────────────────────────
+
+# ─── followup ─────────────────────────────────────────────────────
+
+def _check_followup(
+    output: WorkerOutput, context: AnalysisContext, report: ValidationReport
+) -> None:
+    """회의록에 없는 약속을 만들거나, 없는 할 일에 연결하는 것을 막는다."""
+    known_todos = context.known_todo_ids()
+    known_meetings = {str(m.id) for p in context.projects for m in p.meetings}
+
+    for item in output.result.get("items") or []:
+        what = str(item.get("what", "")).strip()
+        if not what:
+            continue
+
+        meeting_id = str(item.get("meeting_id") or "")
+        if meeting_id and meeting_id not in known_meetings:
+            _add(
+                report,
+                output,
+                "UNKNOWN_SUBJECT",
+                f"'{what}' 이 존재하지 않는 회의({meeting_id})를 근거로 든다.",
+                "컨텍스트의 회의록만 근거로 삼아라.",
+                subject=f"meeting:{meeting_id}",
+            )
+
+        for task_id in item.get("matched_task_ids") or []:
+            if str(task_id) not in known_todos:
+                _add(
+                    report,
+                    output,
+                    "UNKNOWN_TASK",
+                    f"'{what}' 이 존재하지 않는 할 일({task_id})에 연결됐다.",
+                    "컨텍스트에 있는 할 일 id 만 연결하라. 없으면 UNTRACKED 로 두면 된다.",
+                    subject=f"todo:{task_id}",
+                )
+
+        # UNTRACKED 인데 할 일을 연결했거나, TRACKED 인데 연결이 없으면 판정이 모순이다.
+        status = item.get("status")
+        matched = bool(item.get("matched_task_ids"))
+        if status == "UNTRACKED" and matched:
+            _add(
+                report,
+                output,
+                "STATUS_CONFLICT",
+                f"'{what}' 이 UNTRACKED 인데 할 일이 연결돼 있다.",
+                "대응 할 일이 있으면 TRACKED 또는 STALLED 다.",
+                subject=what,
+            )
+        if status in {"TRACKED", "STALLED"} and not matched:
+            _add(
+                report,
+                output,
+                "STATUS_CONFLICT",
+                f"'{what}' 이 {status} 인데 연결된 할 일이 없다.",
+                "대응 할 일이 없으면 UNTRACKED 다.",
+                subject=what,
+            )
+
 
 _SUBJECT_REF = re.compile(r"(todo|user):(\d+)")
 
@@ -404,39 +452,46 @@ def _check_cost(
             )
 
 
-# ─── skill_fit ────────────────────────────────────────────────────
+# ─── staffing (역할 매칭) ─────────────────────────────────────────
 
-def _check_skill_fit(
+def _check_staffing(
     output: WorkerOutput, context: AnalysisContext, report: ValidationReport
 ) -> None:
+    """가용성 숫자 + 역할 근거를 한 번에 본다 (workload·skill_fit 합병)."""
+    _check_load_metrics(output, context, report)
     known_users = context.known_user_ids()
     known_todos = context.known_todo_ids()
 
     # 구조적 상한: 추론 기반 축이 확신을 높게 주면 통합 단계가 잘못된 무게를 싣는다.
-    if output.confidence > SKILL_FIT_CONFIDENCE_CAP:
+    # 상한은 **역할 판단이 들어간 출력에만** 건다. 가용성 숫자는 코드가 계산한 값이라
+    # 확신도를 깎을 이유가 없다 — 합병 전 workload 축에 상한이 없던 것과 같은 이유다.
+    has_role_judgement = any(
+        h.get("candidates") for h in (output.result.get("handoffs") or [])
+    )
+    if has_role_judgement and output.confidence > STAFFING_CONFIDENCE_CAP:
         _add(
             report,
             output,
             "CONFIDENCE_CAP_EXCEEDED",
-            f"적합도 확신도가 상한을 넘었다 ({output.confidence:.2f} > {SKILL_FIT_CONFIDENCE_CAP}).",
-            f"스킬 데이터가 없는 추론이므로 confidence 를 {SKILL_FIT_CONFIDENCE_CAP} 이하로 낮춰라.",
+            f"역할 판단 확신도가 상한을 넘었다 ({output.confidence:.2f} > {STAFFING_CONFIDENCE_CAP}).",
+            f"역할·이력 근거가 프로젝트 안으로 한정되므로 confidence 를 {STAFFING_CONFIDENCE_CAP} 이하로 낮춰라.",
         )
 
-    for assignment in output.result.get("assignments") or []:
-        target = str(assignment.get("target", ""))
-        if target.startswith("todo:") and target[5:] not in known_todos:
+    for handoff in output.result.get("handoffs") or []:
+        task_id = str(handoff.get("task_id") or "")
+        if task_id and task_id not in known_todos:
             _add(
                 report,
                 output,
                 "UNKNOWN_TASK",
-                f"존재하지 않는 할 일에 인원을 배정했다: {target}",
+                f"존재하지 않는 할 일을 넘기려 한다: {task_id}",
                 "컨텍스트에 있는 할 일만 대상으로 삼아라.",
-                subject=target,
+                subject=f"todo:{task_id}",
             )
 
         # 순위가 없는 구조라 '1순위/대안' 검사는 하지 않는다 (2026-08-11 재설계).
-        for candidate in assignment.get("matches") or []:
-            _check_candidate(output, context, report, candidate, target, known_users)
+        for candidate in handoff.get("candidates") or []:
+            _check_candidate(output, context, report, candidate, task_id, known_users)
 
 
 def _check_candidate(
@@ -503,9 +558,9 @@ def _leave_conflict(context: AnalysisContext, user_id: str) -> str | None:
     return None
 
 
-# ─── workload ─────────────────────────────────────────────────────
+# ─── staffing (가용성 숫자) ───────────────────────────────────────
 
-def _check_workload(
+def _check_load_metrics(
     output: WorkerOutput, context: AnalysisContext, report: ValidationReport
 ) -> None:
     # 아래 비교가 문자열 라벨 기준이라 키도 문자열로 맞춘다
