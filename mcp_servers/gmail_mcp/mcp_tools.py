@@ -60,7 +60,19 @@ async def gmail_search_emails(
     query: str,
     max_results: int = 10,
 ) -> dict:
-    """Gmail 검색."""
+    """Gmail 검색. 대화에서 언급된 조건만 아래 문법으로 옮겨 담는다(지어내지 말 것).
+    여러 조건은 공백으로 이어 쓰면 AND 로 합쳐진다.
+
+      from:이름/이메일   보낸 사람       is:unread / is:read   읽음 상태
+      to:이름/이메일     받는 사람       has:attachment         첨부파일 여부
+      subject:키워드     제목 검색       after:YYYY/MM/DD       이 날짜 이후
+                                         before:YYYY/MM/DD      이 날짜 이전
+
+    조건이 하나도 없는 요청("가장 최근 메일 뭐야?" 등)은 query="" (빈 문자열)로
+    부르면 메일함 전체에서(라벨 제한 없음 — 보낸 메일함 포함) 검색된다. 이런
+    요청에 발신자를 되물을 필요가 없다. 결과는 항상 최신순으로 정렬돼서
+    돌아온다(messages[0]이 가장 최근 메일) — "가장 최근 메일 하나"만 필요하면
+    max_results=1 로 호출해도 된다."""
 
     log.info("gmail_search_emails 호출 run_id=%s query=%r", run_id, query)
 
