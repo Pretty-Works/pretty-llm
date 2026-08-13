@@ -40,7 +40,7 @@ from app.engine_b.replan_tools import (
     replan_save,
 )
 from app.tools.ask_user import ask_user
-from app.tools.navigate import navigate
+from app.tools.navigate import navigate, open_external_url
 
 DOMAIN_PROMPT = """당신은 그룹웨어의 재계획(Replan) 담당 에이전트입니다.
 
@@ -102,16 +102,15 @@ DOMAIN_PROMPT = """당신은 그룹웨어의 재계획(Replan) 담당 에이전�
   문제라면 기존대로 파라미터를 고쳐 다시 호출해라.
 - 반영(replan_apply)까지 끝난 뒤 사용자가 "팀원에게 메일로 알려줘" 처럼 메일 발송을
   요청하면, gmail_connection_status 로 먼저 연결 여부를 확인하라. 미연결이면
-  gmail_connect_url 을 호출해 실제 Google 로그인 URL을 받은 뒤 navigate(
-  targetScreen="GMAIL_CONNECT", label="Gmail 연동하러 가기",
-  params={"authorizeUrl": 받은 URL}) 를 호출하라(연동 절차는 이 에이전트가
-  대신 못 한다). ★ 2026-08-13 임시 조치 — 프론트가 아직 이 action을 버튼으로
-  안 그려줘서 navigate만 호출하면 사용자에게 아무 것도 안 보인다. 프론트가
-  반영하기 전까지는 **텍스트 답변에도 그 URL을 그대로 적어라**(예: "Gmail
-  연동이 필요해요. 아래 링크를 눌러 로그인해주세요: {URL}") — 프론트가 버튼을
-  만들면 이 문장은 지워도 된다. gmail_connect_url 이 {"error": ...} 를
-  돌려주면 URL 없이 "잠시 후 다시 시도해달라"고 안내하고 navigate 는 호출하지
-  마라. navigate 호출 후 끝내라.
+  gmail_connect_url 을 호출해 실제 Google 로그인 URL을 받은 뒤
+  open_external_url(url=받은 URL, label="Gmail 연동하러 가기") 를 호출하라
+  (연동 절차는 이 에이전트가 대신 못 한다). ★ navigate 가 아니다 — navigate 는
+  이 그룹웨어 내부 화면으로만 안내할 수 있고, Google 로그인처럼 외부 URL 로
+  나가는 버튼은 open_external_url 로만 만들 수 있다(서버가 origin 을 검사하는
+  유일한 경로다). url 은 지어내지 말고 gmail_connect_url 이 돌려준 값을 그대로
+  옮겨라. gmail_connect_url 이 {"error": ...} 를 돌려주면 URL 없이 "잠시 후
+  다시 시도해달라"고 안내하고 open_external_url 은 호출하지 마라.
+  open_external_url 호출 후 끝내라(URL을 텍스트로 다시 적지 마라 — 버튼이 이미 뜬다).
   연결돼 있으면 gmail_send_email 로 보내되, 받는 사람 이메일 주소가 없으면 지어내지
   말고 ask_user 로 확인하라 — 잘못된 주소로 나간 메일은 되돌릴 수 없다. 메일 본문에는
   반영된 방안(scenarioType)과 핵심 변경 사항을 요약해 담아라.
@@ -133,7 +132,7 @@ async def get_agent():
         return _agent
 
     tools = [propose_replan_scenarios, replan_save, ask_user, replan_apply, navigate,
-             *await get_gmail_tools()]
+             open_external_url, *await get_gmail_tools()]
     agent = build_domain_agent(
         tools,
         DOMAIN_PROMPT,
